@@ -83,7 +83,7 @@ fn spawn_prop(
         RigidBody::Dynamic,
         Collider::cuboid(0.45, 0.45, 0.45),
         Mass(mass),
-        TransformInterpolation::default(),
+        TransformInterpolation,
         Transform::from_translation(position),
         GlobalTransform::IDENTITY,
         LinearVelocity::ZERO,
