@@ -1,0 +1,13 @@
+[package]
+name = "saddle-physics-object-interaction-example-basic"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+bevy = { workspace = true }
+saddle-physics-object-interaction = { workspace = true }
+saddle-physics-object-interaction-example-common = { path = "../common" }
+
+[lints]
+workspace = true

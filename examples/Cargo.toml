@@ -1,0 +1,21 @@
+[workspace]
+members = [
+    "common",
+    "basic",
+    "gravity_gun",
+    "inspect_rotate",
+    "picking_integration",
+    "lab",
+]
+resolver = "3"
+
+[workspace.dependencies]
+avian3d = { version = "0.6", features = ["serialize"] }
+bevy = { version = "0.18", features = ["serialize"] }
+bevy_enhanced_input = "0.24"
+saddle-physics-object-interaction = { path = ".." }
+
+[workspace.lints.clippy]
+too_many_arguments = "allow"
+type_complexity = "allow"
+nonstandard_macro_braces = "warn"
