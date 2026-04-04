@@ -1,5 +1,5 @@
 [package]
-name = "saddle-physics-object-interaction-example-gravity-gun"
+name = "saddle-physics-object-interaction-example-surface-placement"
 version = "0.1.0"
 edition = "2024"
 publish = false

@@ -47,3 +47,52 @@ fn release_evaluation_prioritizes_break_distance() {
     assert_eq!(release.reason, Some(crate::ReleaseReason::DistanceExceeded));
     assert!(!release.became_unstable);
 }
+
+#[test]
+fn pull_to_hand_distance_eases_to_target_distance() {
+    let start_distance = 4.0;
+    let target_distance = 2.5;
+    let duration = 0.3;
+
+    assert_eq!(
+        pull_to_hand_distance(start_distance, target_distance, 0.0, duration),
+        start_distance
+    );
+    assert!(
+        (pull_to_hand_distance(start_distance, target_distance, duration, duration)
+            - target_distance)
+            .abs()
+            < 0.0001
+    );
+
+    let halfway = pull_to_hand_distance(start_distance, target_distance, duration * 0.5, duration);
+    assert!(halfway < start_distance);
+    assert!(halfway > target_distance);
+}
+
+#[test]
+fn pull_to_hand_arc_height_peaks_midway_and_returns_to_zero() {
+    let duration = 0.4;
+    let max_height = 0.35;
+
+    assert_eq!(pull_to_hand_arc_height(0.0, duration, max_height), 0.0);
+    assert!(
+        (pull_to_hand_arc_height(duration * 0.5, duration, max_height) - max_height).abs() < 0.0001
+    );
+    assert!(pull_to_hand_arc_height(duration, duration, max_height).abs() < 0.0001);
+}
+
+#[test]
+fn placement_frame_rotation_aligns_up_with_surface_normal() {
+    let normal = Vec3::new(0.0, 0.70710677, 0.70710677).normalize();
+    let rotation = placement_frame_rotation(normal, -Vec3::Z);
+
+    let up = rotation * Vec3::Y;
+    let forward = rotation * -Vec3::Z;
+
+    assert!(
+        up.distance(normal) < 0.0001,
+        "expected up {normal:?}, got {up:?}"
+    );
+    assert!(forward.dot(normal).abs() < 0.0001);
+}

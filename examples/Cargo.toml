@@ -3,8 +3,10 @@ members = [
     "common",
     "basic",
     "gravity_gun",
+    "gravity_gun_combo",
     "inspect_rotate",
     "picking_integration",
+    "surface_placement",
     "lab",
 ]
 resolver = "3"
@@ -13,7 +15,11 @@ resolver = "3"
 avian3d = { version = "0.6", features = ["serialize"] }
 bevy = { version = "0.18", features = ["serialize"] }
 bevy_enhanced_input = "0.24"
+bevy_flair = "0.7"
+bevy_input_focus = "0.18"
+bevy_ui_widgets = "0.18"
 saddle-physics-object-interaction = { path = ".." }
+saddle-pane = { git = "https://github.com/julien-blanchon/saddle-pane" }
 
 [workspace.lints.clippy]
 too_many_arguments = "allow"

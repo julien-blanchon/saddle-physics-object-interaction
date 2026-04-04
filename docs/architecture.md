@@ -21,6 +21,7 @@ The runtime consumes message inputs:
 - throw
 - hold-distance adjustment
 - held-object rotation
+- surface-placement toggle
 - target cycling
 
 These messages update per-interactor command state. Input helpers, AI controllers, replay tools, and E2E scenarios all drive the same surface.
@@ -62,6 +63,8 @@ This phase emits `ObjectAcquired`.
 
 Hold maintenance runs on the physics schedule so it stays aligned with Avian’s fixed-step world:
 
+- optionally ease a fresh pickup through `pull_to_hand` before it settles at steady hold distance
+- optionally replace the forward hold point with a traced wall/shelf target when `SurfacePlacementMode` is enabled
 - compute the desired hold point from interactor transform, anchor offset, and `HoldDistance`
 - derive the held body’s world-space anchor position from its physics state
 - use a spring force toward the target point
@@ -71,6 +74,8 @@ Hold maintenance runs on the physics schedule so it stays aligned with Avian’s
 - emit `HeldObjectBecameUnstable` when the grace window is exceeded
 
 The prop remains dynamic the whole time. It can collide, swing, scrape, and be blocked by walls.
+
+The important consequence is that surface placement is still physics-driven rather than a teleport. The hold target moves onto the traced surface, but the body gets there through the same spring/damper model as a normal carry state.
 
 ### 5. Release and throw
 
@@ -134,5 +139,7 @@ Important feel changes belong on the prop, not in controller-specific glue:
 - `HoldOrientationOverride`
 - `InteractionCollisionPolicy`
 - `ThrowResponseOverride`
+
+Placement state is intentionally actor-side (`SurfacePlacementMode`) rather than prop-side. That keeps the crate composable: the same held object can be freely carried by one actor and placement-snapped by another without mutating prop authoring data.
 
 This lets a crate, tool, orb, or saw blade each behave differently without changing the plugin API.

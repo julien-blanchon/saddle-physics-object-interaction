@@ -9,7 +9,8 @@ use bevy::{asset::AssetApp, prelude::*, scene::ScenePlugin, time::TimeUpdateStra
 use crate::{
     AcquireFailureReason, AcquisitionMode, HoldDistance, HoldOrientationMode, InteractableBody,
     ObjectInteractionConfig, ObjectInteractionDiagnostics, ObjectInteractionPlugin,
-    ObjectInteractor, ReleaseHeldObject, SetInteractionTarget, ThrowHeldObject, TryAcquireObject,
+    ObjectInteractor, ReleaseHeldObject, SetInteractionTarget, SetSurfacePlacementMode,
+    SurfacePlacementMode, ThrowHeldObject, TryAcquireObject,
 };
 
 fn test_app(config: ObjectInteractionConfig) -> App {
@@ -465,4 +466,71 @@ fn default_orientation_mode_comes_from_config_when_interactor_uses_defaults() {
         .get::<crate::components::HeldRuntime>(prop)
         .unwrap();
     assert_eq!(runtime.base_rotation_offset, Quat::IDENTITY);
+}
+
+#[test]
+fn set_surface_placement_mode_message_toggles_interactor_flag() {
+    let mut app = test_app(ObjectInteractionConfig::default());
+    let actor = spawn_interactor(&mut app, None);
+
+    app.world_mut().write_message(SetSurfacePlacementMode {
+        interactor: actor,
+        enabled: true,
+    });
+    app.update();
+
+    assert_eq!(
+        app.world()
+            .get::<SurfacePlacementMode>(actor)
+            .map(|mode| mode.enabled),
+        Some(true)
+    );
+
+    app.world_mut().write_message(SetSurfacePlacementMode {
+        interactor: actor,
+        enabled: false,
+    });
+    app.update();
+
+    assert_eq!(
+        app.world()
+            .get::<SurfacePlacementMode>(actor)
+            .map(|mode| mode.enabled),
+        Some(false)
+    );
+}
+
+#[test]
+fn acquisition_seeds_pull_to_hand_runtime_from_config() {
+    let mut app = test_app(ObjectInteractionConfig {
+        hold: crate::HoldConfig {
+            default_distance: 2.25,
+            pull_to_hand: crate::PullToHandConfig {
+                enabled: true,
+                duration_seconds: 0.45,
+                arc_height: 0.2,
+                min_start_distance: 0.4,
+            },
+            ..default()
+        },
+        ..default()
+    });
+    let actor = spawn_interactor_without_hold_distance(&mut app);
+    let prop = spawn_prop(&mut app, "Crate", Vec3::new(0.0, 1.0, 1.2), 6.0, None);
+    settle_world(&mut app);
+
+    app.world_mut()
+        .write_message(TryAcquireObject { interactor: actor });
+    app.update();
+
+    let runtime = app
+        .world()
+        .get::<crate::components::HeldRuntime>(prop)
+        .copied()
+        .expect("expected acquired prop runtime");
+
+    assert_eq!(runtime.pull_elapsed, 0.0);
+    assert!((runtime.pull_duration - 0.45).abs() < 0.0001);
+    assert!((runtime.pull_target_distance - 2.25).abs() < 0.0001);
+    assert!(runtime.pull_start_distance >= runtime.pull_target_distance);
 }

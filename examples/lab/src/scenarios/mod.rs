@@ -11,6 +11,7 @@ pub fn list_scenarios() -> Vec<&'static str> {
         "object_interaction_heavy_reject",
         "object_interaction_obstruction_break",
         "object_interaction_rotate_inspect",
+        "object_interaction_surface_placement",
     ]
 }
 
@@ -22,6 +23,7 @@ pub fn scenario_by_name(name: &str) -> Option<Scenario> {
         "object_interaction_heavy_reject" => Some(object_interaction_heavy_reject()),
         "object_interaction_obstruction_break" => Some(object_interaction_obstruction_break()),
         "object_interaction_rotate_inspect" => Some(object_interaction_rotate_inspect()),
+        "object_interaction_surface_placement" => Some(object_interaction_surface_placement()),
         _ => None,
     }
 }
@@ -50,6 +52,12 @@ fn distance(delta: f32) -> Action {
 
 fn rotate_y(degrees: f32) -> Action {
     Action::Custom(Box::new(move |world| common::send_rotate_y(world, degrees)))
+}
+
+fn placement_mode(enabled: bool) -> Action {
+    Action::Custom(Box::new(move |world| {
+        common::send_set_surface_placement(world, enabled)
+    }))
 }
 
 fn smoke_launch() -> Scenario {
@@ -213,5 +221,44 @@ fn object_interaction_rotate_inspect() -> Scenario {
         .then(Action::Screenshot("inspect_rotated".into()))
         .then(Action::WaitFrames(1))
         .then(assertions::log_summary("object_interaction_rotate_inspect"))
+        .build()
+}
+
+fn object_interaction_surface_placement() -> Scenario {
+    Scenario::builder("object_interaction_surface_placement")
+        .description("Acquire the crate, move to the placement station, enable placement mode, and verify the held prop snaps onto the wall surface.")
+        .then(station(DemoStation::Crate))
+        .then(Action::WaitFrames(10))
+        .then(acquire())
+        .then(Action::WaitFrames(24))
+        .then(station(DemoStation::Placement))
+        .then(Action::WaitFrames(18))
+        .then(placement_mode(true))
+        .then(Action::WaitFrames(18))
+        .then(assertions::custom("placement mode snaps the crate to the wall", |world| {
+            let diagnostics = world.resource::<DemoDiagnostics>();
+            let demo = world.resource::<DemoWorld>();
+            let actor_x = world
+                .get::<bevy::prelude::Transform>(demo.interactor)
+                .map(|transform| transform.translation.x)
+                .unwrap_or_default();
+            let prop_transform = world.get::<bevy::prelude::Transform>(demo.light_crate);
+            diagnostics.surface_placement_enabled
+                && diagnostics.held_name.as_deref() == Some("Light Crate")
+                && world
+                    .get::<Holding>(demo.interactor)
+                    .is_some_and(|holding| holding.0 == demo.light_crate)
+                && world
+                    .get::<HeldBy>(demo.light_crate)
+                    .is_some_and(|held_by| held_by.0 == demo.interactor)
+                && prop_transform.is_some_and(|transform| {
+                    transform.translation.x < actor_x - 1.0
+                        && transform.translation.x > 2.7
+                        && transform.translation.y > 0.6
+                })
+        }))
+        .then(Action::Screenshot("surface_placement".into()))
+        .then(Action::WaitFrames(1))
+        .then(assertions::log_summary("object_interaction_surface_placement"))
         .build()
 }

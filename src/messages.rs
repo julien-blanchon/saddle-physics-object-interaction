@@ -85,6 +85,13 @@ pub struct RotateHeldObject {
 
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq, Reflect)]
 #[reflect(Debug, PartialEq)]
+pub struct SetSurfacePlacementMode {
+    pub interactor: Entity,
+    pub enabled: bool,
+}
+
+#[derive(Message, Debug, Clone, Copy, PartialEq, Eq, Reflect)]
+#[reflect(Debug, PartialEq)]
 pub struct CycleInteractionTarget {
     pub interactor: Entity,
     pub direction: CycleDirection,

@@ -93,6 +93,12 @@ pub struct InteractionCandidates {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Reflect, Component, Default)]
 #[reflect(Debug, Component, PartialEq, Default)]
+pub struct SurfacePlacementMode {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Reflect, Component, Default)]
+#[reflect(Debug, Component, PartialEq, Default)]
 pub enum ObjectInteractionState {
     #[default]
     Idle,
@@ -111,6 +117,7 @@ pub enum ObjectInteractionState {
     HoldDistance,
     InteractionTarget,
     InteractionCandidates,
+    SurfacePlacementMode,
     ObjectInteractionCommandState
 )]
 pub struct ObjectInteractor {
@@ -285,6 +292,10 @@ pub(crate) struct HeldRuntime {
     pub rotation_adjustment: Quat,
     pub last_target_position: Vec3,
     pub last_target_rotation: Quat,
+    pub pull_elapsed: f32,
+    pub pull_duration: f32,
+    pub pull_start_distance: f32,
+    pub pull_target_distance: f32,
     pub unstable_seconds: f32,
     pub occluded_seconds: f32,
     pub last_force: Vec3,
@@ -306,6 +317,10 @@ impl HeldRuntime {
             rotation_adjustment: Quat::IDENTITY,
             last_target_position,
             last_target_rotation,
+            pull_elapsed: 0.0,
+            pull_duration: 0.0,
+            pull_start_distance: 0.0,
+            pull_target_distance: 0.0,
             unstable_seconds: 0.0,
             occluded_seconds: 0.0,
             last_force: Vec3::ZERO,

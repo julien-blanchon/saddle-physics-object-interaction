@@ -1,6 +1,6 @@
 # Saddle Physics Object Interaction
 
-Reusable 3D rigid-body interaction for Bevy + Avian3D: detect, acquire, pull, hold, inspect, drop, and throw dynamic bodies through a message-driven API.
+Reusable 3D rigid-body interaction for Bevy + Avian3D: detect, acquire, pull, hold, inspect, place against surfaces, drop, and throw dynamic bodies through a message-driven API.
 
 The crate stays generic. It owns candidate selection, hold stabilization, release semantics, diagnostics, and output messages. Consumer code owns controller-specific input, UI, VFX, audio, quest logic, and any actor locomotion stack.
 
@@ -100,11 +100,13 @@ app.add_plugins(ObjectInteractionPlugin::new(
 | `InteractionAnchor` / `HoldDistance` | Actor-side hold-point offset and current hold distance |
 | `InteractionTarget` / `InteractionCandidates` | Current selected target and sorted candidate list |
 | `ObjectInteractionState` / `Holding` / `HeldBy` | Runtime state for idle, targeting, and active holds |
+| `SurfacePlacementMode` | Per-interactor toggle that redirects the hold target onto a traced surface |
 | `PreferredHoldDistance` | Per-prop default hold distance override |
 | `InteractionMassLimitOverride` | Per-prop effective mass override for selection/validation |
 | `HoldPointOverride` / `HoldOrientationOverride` | Per-prop local anchor and rotation policy overrides |
 | `InteractionCollisionPolicy` | Collision-layer behavior while a prop is held |
 | `ThrowResponseOverride` | Per-prop throw impulse and spin scaling |
+| `PullToHandConfig` / `SurfacePlacementConfig` | Global hold sub-configs for pickup easing and wall/shelf placement |
 | `ObjectInteractionConfig` | Global acquisition, scoring, hold, and throw tuning |
 | `ObjectInteractionDiagnostics` / `ObjectInteractionDebugSettings` | Runtime counters and optional gizmo controls |
 
@@ -136,6 +138,7 @@ Input messages:
 - `ThrowHeldObject`
 - `AdjustHoldDistance`
 - `RotateHeldObject`
+- `SetSurfacePlacementMode`
 - `CycleInteractionTarget`
 
 Output messages:
@@ -155,15 +158,26 @@ The crate is split on purpose:
 
 That keeps the handle stable under fixed-step physics while still letting player input, AI, replay tools, and tests drive the runtime through messages. For dynamic props, add `TransformInterpolation` so the held object looks smooth between fixed ticks.
 
+New holds now support two higher-level presentation layers without giving up the fixed-step spring model:
+
+- `pull_to_hand` eases a newly acquired prop from its pickup point into the steady-state hold distance with a configurable arc
+- `SurfacePlacementMode` traces ahead of the interactor and snaps the held anchor point onto shelves, walls, and panels for puzzle-style placement
+
 ## Examples
 
 | Example | Run | What it demonstrates |
 | --- | --- | --- |
-| `basic` | `cargo run --example basic` | Message-driven acquire, hold, drop, throw, rotate, and candidate cycling |
-| `gravity_gun` | `cargo run --example gravity_gun` | Stronger pull/throw tuning and higher mass budget |
-| `inspect_rotate` | `cargo run --example inspect_rotate` | Close hold distance, aligned rotation, and inspection feel |
-| `picking_integration` | `cargo run --example picking_integration` | Cursor-driven acquisition using Bevy mesh picking |
+| `basic` | `cargo run -p saddle-physics-object-interaction-example-basic` | Message-driven acquire, hold, drop, throw, rotate, and candidate cycling |
+| `gravity_gun` | `cargo run -p saddle-physics-object-interaction-example-gravity_gun` | Stronger pull/throw tuning and higher mass budget |
+| `gravity_gun_combo` | `cargo run -p saddle-physics-object-interaction-example-gravity_gun_combo` | Cross-crate gravity-gun puzzle room using git-wired destruction and transform interpolation crates |
+| `inspect_rotate` | `cargo run -p saddle-physics-object-interaction-example-inspect_rotate` | Close hold distance, aligned rotation, and inspection feel |
+| `picking_integration` | `cargo run -p saddle-physics-object-interaction-example-picking_integration` | Cursor-driven acquisition using Bevy mesh picking |
+| `surface_placement` | `cargo run -p saddle-physics-object-interaction-example-surface-placement` | Wall/shelf placement flow with pull-to-hand easing and live pane tuning |
 | `saddle-physics-object-interaction-lab` | `cargo run -p saddle-physics-object-interaction-lab` | Rich crate-local BRP/E2E verification app |
+
+All example workspaces include `saddle-pane` so the hold, pull-to-hand, throw, placement, and combo-room parameters can be edited live while the demo runs.
+
+The combo example is intentionally wired the same way downstream games would do it: the local object-interaction crate stays on the workspace path, while `saddle-physics-destruction` and `saddle-physics-transform-interpolation` are pulled in through Git dependencies to prove the public APIs compose cleanly across repos.
 
 For batch verification, every example and the crate-local lab also support
 `OBJECT_INTERACTION_EXIT_AFTER_SECONDS=<seconds>` so they can boot, render, and
@@ -183,8 +197,9 @@ The lab includes:
 - an overweight rejection path
 - an inspection-focused prop with different overrides
 - an occlusion station for forced-release verification
+- a placement wall for surface-snapped carry/puzzle setups
 - BRP-friendly runtime diagnostics
-- targeted E2E scenarios for smoke, throw, rejection, occlusion, and inspect rotation
+- targeted E2E scenarios for smoke, throw, rejection, occlusion, inspect rotation, and surface placement
 
 ## E2E Verification
 
@@ -195,6 +210,7 @@ cargo run -p saddle-physics-object-interaction-lab --features e2e -- object_inte
 cargo run -p saddle-physics-object-interaction-lab --features e2e -- object_interaction_heavy_reject
 cargo run -p saddle-physics-object-interaction-lab --features e2e -- object_interaction_obstruction_break
 cargo run -p saddle-physics-object-interaction-lab --features e2e -- object_interaction_rotate_inspect
+cargo run -p saddle-physics-object-interaction-lab --features e2e -- object_interaction_surface_placement
 ```
 
 ## BRP Inspection

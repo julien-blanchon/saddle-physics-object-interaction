@@ -6,7 +6,7 @@ Crate-local showcase and verification app for `saddle-physics-object-interaction
 
 - exercise the same message-driven runtime used by the standalone examples
 - provide a BRP-friendly scene with named props and live diagnostics
-- host targeted `bevy_e2e` scenarios for acquisition, release, throw, heavy rejection, occlusion break, and inspect rotation
+- host targeted `bevy_e2e` scenarios for acquisition, release, throw, heavy rejection, occlusion break, inspect rotation, and surface placement
 
 ## Run
 
@@ -24,6 +24,7 @@ With E2E:
 
 ```bash
 cargo run -p saddle-physics-object-interaction-lab --features e2e -- object_interaction_smoke
+cargo run -p saddle-physics-object-interaction-lab --features e2e -- object_interaction_surface_placement
 ```
 
 ## Controls
@@ -32,11 +33,13 @@ cargo run -p saddle-physics-object-interaction-lab --features e2e -- object_inte
 - `2` heavy station
 - `3` inspect station
 - `4` occlusion station
+- `5` placement station
 - `E` acquire
 - `R` release
 - `F` throw
 - `Z` / `X` adjust hold distance
 - `A` / `D` rotate held object
+- `G` toggle surface placement mode
 - `Tab` / `Q` cycle candidates
 
 ## BRP

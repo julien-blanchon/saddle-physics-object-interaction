@@ -13,14 +13,15 @@ use crate::{
         HoldOrientationMode, HoldPointOverride, Holding, InteractionAnchor, InteractionCandidates,
         InteractionCollisionPolicy, InteractionMassLimitOverride, InteractionTarget,
         ObjectInteractionCommandState, ObjectInteractionState, ObjectInteractor, PendingThrow,
-        PreferredHoldDistance, SavedCollisionLayers,
+        PreferredHoldDistance, SavedCollisionLayers, SurfacePlacementMode,
     },
     config::ObjectInteractionConfig,
     debug,
     messages::{
         AcquireFailureReason, AdjustHoldDistance, CycleDirection, CycleInteractionTarget,
         ObjectAcquired, ObjectInteractionFailed, ReleaseHeldObject, ReleaseReason,
-        RotateHeldObject, SetInteractionTarget, ThrowHeldObject, TryAcquireObject,
+        RotateHeldObject, SetInteractionTarget, SetSurfacePlacementMode, ThrowHeldObject,
+        TryAcquireObject,
     },
     physics,
     selection::{self, CandidateScoreInput},
@@ -66,33 +67,38 @@ pub(crate) fn apply_messages(
     mut throw: MessageReader<ThrowHeldObject>,
     mut adjust_hold_distance: MessageReader<AdjustHoldDistance>,
     mut rotate_held: MessageReader<RotateHeldObject>,
+    mut set_surface_placement: MessageReader<SetSurfacePlacementMode>,
     mut cycle_target: MessageReader<CycleInteractionTarget>,
     mut q_interactor: Query<
-        (&mut HoldDistance, &mut ObjectInteractionCommandState),
+        (
+            &mut HoldDistance,
+            &mut ObjectInteractionCommandState,
+            &mut SurfacePlacementMode,
+        ),
         With<ObjectInteractor>,
     >,
 ) {
     for message in try_acquire.read() {
-        if let Ok((_, mut command_state)) = q_interactor.get_mut(message.interactor) {
+        if let Ok((_, mut command_state, _)) = q_interactor.get_mut(message.interactor) {
             command_state.acquire_requested = true;
         }
     }
 
     for message in set_target.read() {
-        if let Ok((_, mut command_state)) = q_interactor.get_mut(message.interactor) {
+        if let Ok((_, mut command_state, _)) = q_interactor.get_mut(message.interactor) {
             command_state.override_target = message.target;
         }
     }
 
     for message in release.read() {
-        if let Ok((_, mut command_state)) = q_interactor.get_mut(message.interactor) {
+        if let Ok((_, mut command_state, _)) = q_interactor.get_mut(message.interactor) {
             command_state.pending_release = Some(ReleaseReason::Dropped);
             command_state.pending_throw = None;
         }
     }
 
     for message in throw.read() {
-        if let Ok((_, mut command_state)) = q_interactor.get_mut(message.interactor) {
+        if let Ok((_, mut command_state, _)) = q_interactor.get_mut(message.interactor) {
             command_state.pending_throw = Some(PendingThrow {
                 impulse_scale: message.impulse_scale,
                 angular_impulse_scale: message.angular_impulse_scale,
@@ -102,7 +108,7 @@ pub(crate) fn apply_messages(
     }
 
     for message in adjust_hold_distance.read() {
-        if let Ok((mut hold_distance, _)) = q_interactor.get_mut(message.interactor) {
+        if let Ok((mut hold_distance, _, _)) = q_interactor.get_mut(message.interactor) {
             hold_distance.0 = selection::hold_distance_clamped(
                 hold_distance.0 + message.delta,
                 config.hold.min_distance,
@@ -112,13 +118,19 @@ pub(crate) fn apply_messages(
     }
 
     for message in rotate_held.read() {
-        if let Ok((_, mut command_state)) = q_interactor.get_mut(message.interactor) {
+        if let Ok((_, mut command_state, _)) = q_interactor.get_mut(message.interactor) {
             command_state.rotation_delta = message.delta * command_state.rotation_delta;
         }
     }
 
+    for message in set_surface_placement.read() {
+        if let Ok((_, _, mut placement_mode)) = q_interactor.get_mut(message.interactor) {
+            placement_mode.enabled = message.enabled;
+        }
+    }
+
     for message in cycle_target.read() {
-        if let Ok((_, mut command_state)) = q_interactor.get_mut(message.interactor) {
+        if let Ok((_, mut command_state, _)) = q_interactor.get_mut(message.interactor) {
             command_state.cycle_steps += match message.direction {
                 CycleDirection::Next => 1,
                 CycleDirection::Previous => -1,
@@ -671,16 +683,23 @@ pub(crate) fn acquire_selected_targets(
         }
 
         let desired_position = origin + actor_transform.forward() * hold_distance.0;
-        let desired_rotation = physics::desired_hold_rotation(
-            actor_transform.rotation,
-            &HeldRuntime::new(
-                local_anchor,
-                base_rotation_offset,
-                desired_position,
-                Quat::IDENTITY,
-                None,
-            ),
+        let mut held_runtime = HeldRuntime::new(
+            local_anchor,
+            base_rotation_offset,
+            desired_position,
+            Quat::IDENTITY,
+            None,
         );
+        let prop_distance = origin.distance(prop_translation);
+        if config.hold.pull_to_hand.enabled
+            && prop_distance >= hold_distance.0 + config.hold.pull_to_hand.min_start_distance
+        {
+            held_runtime.pull_duration = config.hold.pull_to_hand.duration_seconds.max(0.0);
+            held_runtime.pull_start_distance = prop_distance.max(hold_distance.0);
+            held_runtime.pull_target_distance = hold_distance.0;
+        }
+        let desired_rotation =
+            physics::desired_hold_rotation(actor_transform.rotation, &held_runtime);
         let collision_policy = collision_policy_override
             .copied()
             .unwrap_or(config.hold.collision_policy);
@@ -695,13 +714,11 @@ pub(crate) fn acquire_selected_targets(
         commands.entity(actor).insert(Holding(prop));
         commands.entity(prop).insert((
             HeldBy(actor),
-            HeldRuntime::new(
-                local_anchor,
-                base_rotation_offset,
-                desired_position,
-                desired_rotation,
+            HeldRuntime {
+                last_target_rotation: desired_rotation,
                 saved_collision_layers,
-            ),
+                ..held_runtime
+            },
         ));
         *state = ObjectInteractionState::Holding(prop);
         *target = InteractionTarget::default();

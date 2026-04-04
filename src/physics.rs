@@ -8,7 +8,7 @@ use bevy::{ecs::relationship::Relationship, prelude::*};
 use crate::{
     components::{
         HeldBy, HeldRuntime, Holding, InteractionAnchor, ObjectInteractionCommandState,
-        ObjectInteractor, ThrowResponseOverride,
+        ObjectInteractor, SurfacePlacementMode, ThrowResponseOverride,
     },
     config::ObjectInteractionConfig,
     debug,
@@ -107,6 +107,95 @@ pub(crate) fn desired_hold_rotation(actor_rotation: Quat, runtime: &HeldRuntime)
     actor_rotation * runtime.base_rotation_offset * runtime.rotation_adjustment
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct SurfacePlacementTarget {
+    pub position: Vec3,
+    pub frame_rotation: Quat,
+}
+
+pub(crate) fn pull_to_hand_distance(
+    start_distance: f32,
+    target_distance: f32,
+    elapsed: f32,
+    duration: f32,
+) -> f32 {
+    if duration <= f32::EPSILON {
+        return target_distance;
+    }
+
+    let t = (elapsed / duration).clamp(0.0, 1.0);
+    let eased = 1.0 - (1.0 - t).powi(3);
+    start_distance.lerp(target_distance, eased)
+}
+
+pub(crate) fn pull_to_hand_arc_height(elapsed: f32, duration: f32, max_height: f32) -> f32 {
+    if duration <= f32::EPSILON || max_height <= f32::EPSILON {
+        return 0.0;
+    }
+
+    let t = (elapsed / duration).clamp(0.0, 1.0);
+    (t * PI).sin() * max_height
+}
+
+pub(crate) fn placement_frame_rotation(surface_normal: Vec3, reference_forward: Vec3) -> Quat {
+    let up = surface_normal.try_normalize().unwrap_or(Vec3::Y);
+    let mut forward = reference_forward - up * reference_forward.dot(up);
+    if forward.length_squared() <= 1e-6 {
+        forward = up.any_orthonormal_vector();
+    }
+
+    Transform::IDENTITY
+        .looking_to(forward.normalize_or_zero(), up)
+        .rotation
+}
+
+fn sample_surface_placement_target(
+    spatial_query: &SpatialQuery,
+    q_collider_parent: &Query<&ColliderOf>,
+    interactor: &ObjectInteractor,
+    actor: Entity,
+    prop: Entity,
+    actor_origin: Vec3,
+    forward: Dir3,
+    config: &ObjectInteractionConfig,
+) -> Option<SurfacePlacementTarget> {
+    let mut filter = interactor.obstruction_filter.clone();
+    filter.excluded_entities.insert(actor);
+    filter.excluded_entities.insert(prop);
+
+    let shape = avian3d::prelude::Collider::sphere(config.hold.surface_placement.probe_radius);
+    let cast_config = avian3d::prelude::ShapeCastConfig::from_max_distance(
+        config.hold.surface_placement.max_distance,
+    );
+
+    spatial_query
+        .shape_hits(
+            &shape,
+            actor_origin,
+            Quat::IDENTITY,
+            forward,
+            16,
+            &cast_config,
+            &filter,
+        )
+        .into_iter()
+        .find_map(|hit| {
+            let hit_body = q_collider_parent
+                .get(hit.entity)
+                .map(|parent| parent.get())
+                .unwrap_or(hit.entity);
+            if hit_body == actor || hit_body == prop {
+                return None;
+            }
+
+            let normal = hit.normal1.normalize_or_zero();
+            Some(SurfacePlacementTarget {
+                position: hit.point1 + normal * config.hold.surface_placement.surface_offset,
+                frame_rotation: placement_frame_rotation(normal, *forward),
+            })
+        })
+}
+
 pub(crate) fn maintain_holds(
     time: Res<Time>,
     config: Res<ObjectInteractionConfig>,
@@ -119,6 +208,7 @@ pub(crate) fn maintain_holds(
         &ObjectInteractor,
         &InteractionAnchor,
         &crate::components::HoldDistance,
+        &SurfacePlacementMode,
         &Holding,
         &mut ObjectInteractionCommandState,
     )>,
@@ -126,8 +216,16 @@ pub(crate) fn maintain_holds(
 ) {
     let dt = time.delta_secs().max(1.0 / 240.0);
 
-    for (actor, actor_transform, interactor, anchor, hold_distance, holding, mut command_state) in
-        &mut q_actor
+    for (
+        actor,
+        actor_transform,
+        interactor,
+        anchor,
+        hold_distance,
+        placement_mode,
+        holding,
+        mut command_state,
+    ) in &mut q_actor
     {
         if command_state.pending_release.is_some() || command_state.pending_throw.is_some() {
             command_state.rotation_delta = Quat::IDENTITY;
@@ -150,8 +248,55 @@ pub(crate) fn maintain_holds(
 
         let actor_transform = actor_transform.compute_transform();
         let actor_origin = actor_transform.transform_point(anchor.local_offset);
-        let desired_position = actor_origin + actor_transform.forward() * hold_distance.0;
-        let desired_rotation = desired_hold_rotation(actor_transform.rotation, &runtime);
+        let placement_target = placement_mode
+            .enabled
+            .then(|| {
+                sample_surface_placement_target(
+                    &spatial_query,
+                    &q_collider_parent,
+                    interactor,
+                    actor,
+                    prop,
+                    actor_origin,
+                    actor_transform.forward(),
+                    &config,
+                )
+            })
+            .flatten();
+
+        runtime.pull_target_distance = hold_distance.0;
+        let actor_forward = *actor_transform.forward();
+        let actor_up = *actor_transform.up();
+        let (desired_position, desired_rotation) = if let Some(placement_target) = placement_target
+        {
+            runtime.pull_elapsed = runtime.pull_duration;
+            let rotation_basis = if config.hold.surface_placement.align_to_surface {
+                placement_target.frame_rotation
+            } else {
+                actor_transform.rotation
+            };
+            (
+                placement_target.position,
+                rotation_basis * runtime.base_rotation_offset * runtime.rotation_adjustment,
+            )
+        } else {
+            runtime.pull_elapsed = (runtime.pull_elapsed + dt).min(runtime.pull_duration);
+            let pull_distance = pull_to_hand_distance(
+                runtime.pull_start_distance.max(hold_distance.0),
+                hold_distance.0,
+                runtime.pull_elapsed,
+                runtime.pull_duration,
+            );
+            let pull_arc = pull_to_hand_arc_height(
+                runtime.pull_elapsed,
+                runtime.pull_duration,
+                config.hold.pull_to_hand.arc_height,
+            );
+            (
+                actor_origin + actor_forward * pull_distance + actor_up * pull_arc,
+                desired_hold_rotation(actor_transform.rotation, &runtime),
+            )
+        };
 
         let body_position = forces.position().0;
         let body_rotation = forces.rotation().0;

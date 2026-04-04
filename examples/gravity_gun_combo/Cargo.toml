@@ -1,0 +1,17 @@
+[package]
+name = "saddle-physics-object-interaction-example-gravity_gun_combo"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+avian3d = { workspace = true }
+bevy = { workspace = true }
+saddle-pane = { workspace = true }
+saddle-physics-object-interaction = { workspace = true }
+saddle-physics-object-interaction-example-common = { path = "../common" }
+saddle-physics-destruction = { git = "https://github.com/julien-blanchon/saddle-physics-destruction" }
+saddle-physics-transform-interpolation = { git = "https://github.com/julien-blanchon/saddle-physics-transform-interpolation" }
+
+[lints]
+workspace = true

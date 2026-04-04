@@ -13,10 +13,11 @@ pub use components::{
     HoldOrientationOverride, HoldPointOverride, Holding, InteractableBody, InteractionAnchor,
     InteractionCandidates, InteractionCollisionPolicy, InteractionMassLimitOverride,
     InteractionTarget, ObjectInteractionState, ObjectInteractor, PreferredHoldDistance,
-    ThrowResponseOverride,
+    SurfacePlacementMode, ThrowResponseOverride,
 };
 pub use config::{
-    AcquisitionConfig, HoldConfig, ObjectInteractionConfig, TargetScoringConfig, ThrowConfig,
+    AcquisitionConfig, HoldConfig, ObjectInteractionConfig, PullToHandConfig,
+    SurfacePlacementConfig, TargetScoringConfig, ThrowConfig,
 };
 pub use debug::{
     InteractionDiagnosticEntry, ObjectInteractionDebugSettings, ObjectInteractionDiagnostics,
@@ -26,7 +27,7 @@ pub use messages::{
     AcquireFailureReason, AdjustHoldDistance, CycleDirection, CycleInteractionTarget,
     HeldObjectBecameUnstable, ObjectAcquired, ObjectInteractionFailed, ObjectReleased,
     ObjectThrown, ReleaseHeldObject, ReleaseReason, RotateHeldObject, SetInteractionTarget,
-    ThrowHeldObject, TryAcquireObject,
+    SetSurfacePlacementMode, ThrowHeldObject, TryAcquireObject,
 };
 
 use avian3d::prelude::{PhysicsSchedule, PhysicsStepSystems};
@@ -129,6 +130,7 @@ Add Avian's physics plugins before `ObjectInteractionPlugin`, or pass a custom f
             .add_message::<ThrowHeldObject>()
             .add_message::<AdjustHoldDistance>()
             .add_message::<RotateHeldObject>()
+            .add_message::<SetSurfacePlacementMode>()
             .add_message::<CycleInteractionTarget>()
             .add_message::<ObjectAcquired>()
             .add_message::<ObjectReleased>()
@@ -168,7 +170,11 @@ Add Avian's physics plugins before `ObjectInteractionPlugin`, or pass a custom f
             .register_type::<ObjectReleased>()
             .register_type::<ObjectThrown>()
             .register_type::<PreferredHoldDistance>()
+            .register_type::<PullToHandConfig>()
             .register_type::<ReleaseReason>()
+            .register_type::<SetSurfacePlacementMode>()
+            .register_type::<SurfacePlacementConfig>()
+            .register_type::<SurfacePlacementMode>()
             .register_type::<TargetScoringConfig>()
             .register_type::<ThrowConfig>()
             .register_type::<ThrowResponseOverride>()

@@ -50,6 +50,46 @@ impl Default for TargetScoringConfig {
 
 #[derive(Debug, Clone, PartialEq, Reflect)]
 #[reflect(Debug, PartialEq)]
+pub struct PullToHandConfig {
+    pub enabled: bool,
+    pub duration_seconds: f32,
+    pub arc_height: f32,
+    pub min_start_distance: f32,
+}
+
+impl Default for PullToHandConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            duration_seconds: 0.22,
+            arc_height: 0.28,
+            min_start_distance: 0.4,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Reflect)]
+#[reflect(Debug, PartialEq)]
+pub struct SurfacePlacementConfig {
+    pub max_distance: f32,
+    pub probe_radius: f32,
+    pub surface_offset: f32,
+    pub align_to_surface: bool,
+}
+
+impl Default for SurfacePlacementConfig {
+    fn default() -> Self {
+        Self {
+            max_distance: 5.5,
+            probe_radius: 0.18,
+            surface_offset: 0.05,
+            align_to_surface: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Reflect)]
+#[reflect(Debug, PartialEq)]
 pub struct HoldConfig {
     pub min_distance: f32,
     pub default_distance: f32,
@@ -66,6 +106,8 @@ pub struct HoldConfig {
     pub occlusion_grace_seconds: f32,
     pub collision_policy: InteractionCollisionPolicy,
     pub orientation_mode: HoldOrientationMode,
+    pub pull_to_hand: PullToHandConfig,
+    pub surface_placement: SurfacePlacementConfig,
 }
 
 impl Default for HoldConfig {
@@ -86,6 +128,8 @@ impl Default for HoldConfig {
             occlusion_grace_seconds: 0.28,
             collision_policy: InteractionCollisionPolicy::IgnoreInteractorLayer,
             orientation_mode: HoldOrientationMode::PreserveWorld,
+            pull_to_hand: PullToHandConfig::default(),
+            surface_placement: SurfacePlacementConfig::default(),
         }
     }
 }

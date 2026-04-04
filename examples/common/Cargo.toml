@@ -8,7 +8,11 @@ publish = false
 avian3d = { workspace = true }
 bevy = { workspace = true }
 bevy_enhanced_input = { workspace = true }
+bevy_flair = { workspace = true }
+bevy_input_focus = { workspace = true }
+bevy_ui_widgets = { workspace = true }
 saddle-physics-object-interaction = { workspace = true }
+saddle-pane = { workspace = true }
 
 [lints]
 workspace = true

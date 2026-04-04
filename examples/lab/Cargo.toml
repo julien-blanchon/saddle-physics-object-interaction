@@ -15,6 +15,7 @@ bevy = { version = "0.18", features = ["bevy_remote", "serialize"] }
 bevy_enhanced_input = { workspace = true }
 saddle-physics-object-interaction = { workspace = true }
 saddle-physics-object-interaction-example-common = { path = "../common" }
+saddle-pane = { workspace = true }
 bevy_brp_extras = { version = "0.19", optional = true }
 saddle-bevy-e2e = { git = "https://github.com/julien-blanchon/saddle-bevy-e2e", features = ["json"], optional = true }
 

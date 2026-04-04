@@ -17,6 +17,7 @@ pub struct InteractionDiagnosticEntry {
     pub target: Option<Entity>,
     pub held_object: Option<Entity>,
     pub hold_distance: f32,
+    pub surface_placement_enabled: bool,
     pub candidate_count: usize,
     pub last_force: Vec3,
     pub last_torque: Vec3,
@@ -118,6 +119,7 @@ pub(crate) fn refresh_diagnostics(
     q_interactor: Query<(
         Entity,
         &crate::components::HoldDistance,
+        &crate::components::SurfacePlacementMode,
         &InteractionCandidates,
         &InteractionTarget,
         &ObjectInteractionState,
@@ -127,7 +129,7 @@ pub(crate) fn refresh_diagnostics(
 ) {
     diagnostics.interactors.clear();
 
-    for (entity, hold_distance, candidates, target, state, holding) in &q_interactor {
+    for (entity, hold_distance, placement, candidates, target, state, holding) in &q_interactor {
         let (last_force, last_torque, unstable_seconds, occluded_seconds) = holding
             .and_then(|holding| q_held_runtime.get(holding.0).ok())
             .map(|runtime| {
@@ -150,6 +152,7 @@ pub(crate) fn refresh_diagnostics(
             target: target.entity,
             held_object,
             hold_distance: hold_distance.0,
+            surface_placement_enabled: placement.enabled,
             candidate_count: candidates.ordered.len(),
             last_force,
             last_torque,
