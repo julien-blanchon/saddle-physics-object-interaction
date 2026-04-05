@@ -1,13 +1,18 @@
 //! Gravity-gun-style interaction with stronger pull, heavier mass limit, and powerful throws.
 //!
-//! Press **E** to acquire, **R** to release, **F** to throw with force.
-//! **Z/X** adjust hold distance, **A/D** rotate, **Tab** cycles candidates.
+//! Walk around with **WASD**, look with **mouse**. **Shift** to sprint.
+//! **E** or **LMB** to acquire, **F** or **LMB** (while holding) to throw,
+//! **R** or **RMB** to release. **Q/C** rotate, **Scroll** or **Z/X** distance, **Tab** cycle.
 
 use avian3d::prelude::{
     AngularDamping, Collider, CollisionLayers, LayerMask, LinearDamping, Mass, PhysicsPlugins,
     RigidBody, TransformInterpolation,
 };
-use bevy::prelude::*;
+use bevy::{
+    input::mouse::{MouseMotion, MouseWheel},
+    prelude::*,
+    window::{CursorGrabMode, CursorOptions, PrimaryWindow},
+};
 use bevy_enhanced_input::prelude::*;
 use bevy_flair::FlairPlugin;
 use bevy_input_focus::{InputDispatchPlugin, tab_navigation::TabNavigationPlugin};
@@ -15,14 +20,14 @@ use bevy_ui_widgets::UiWidgetsPlugins;
 use saddle_pane::prelude::*;
 use saddle_physics_object_interaction::{
     AdjustHoldDistance, CycleDirection, CycleInteractionTarget, HeldBy, HoldDistance,
-    InteractableBody, InteractionMassLimitOverride, InteractionTarget,
-    ObjectInteractionConfig, ObjectInteractionDebugSettings, ObjectInteractionPlugin,
-    ObjectInteractionState, ObjectInteractionSystems, ObjectInteractor, PreferredHoldDistance,
-    ReleaseHeldObject, RotateHeldObject, ThrowHeldObject, ThrowResponseOverride, TryAcquireObject,
+    InteractableBody, InteractionMassLimitOverride, InteractionTarget, ObjectInteractionConfig,
+    ObjectInteractionDebugSettings, ObjectInteractionPlugin, ObjectInteractionState,
+    ObjectInteractionSystems, ObjectInteractor, PreferredHoldDistance, ReleaseHeldObject,
+    RotateHeldObject, ThrowHeldObject, ThrowResponseOverride, TryAcquireObject,
 };
 
 // ---------------------------------------------------------------------------
-// Input actions
+// Input actions (keyboard interaction — NOT movement)
 // ---------------------------------------------------------------------------
 
 #[derive(InputAction)]
@@ -59,6 +64,21 @@ struct CycleAction;
 
 #[derive(Component)]
 struct InputCtx;
+
+// ---------------------------------------------------------------------------
+// FPS controller
+// ---------------------------------------------------------------------------
+
+#[derive(Component)]
+struct FpsController {
+    yaw: f32,
+    pitch: f32,
+    speed: f32,
+    sensitivity: f32,
+}
+
+#[derive(Resource)]
+struct CursorGrabbed(bool);
 
 // ---------------------------------------------------------------------------
 // Markers
@@ -115,6 +135,7 @@ fn main() {
         enabled: true,
         draw_gizmos: false,
     });
+    app.insert_resource(CursorGrabbed(true));
 
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
@@ -136,7 +157,18 @@ fn main() {
     app.add_input_context::<InputCtx>();
     app.add_plugins(ObjectInteractionPlugin::default());
 
-    app.add_systems(Startup, setup_scene);
+    app.add_systems(Startup, (setup_scene, grab_cursor));
+    app.add_systems(
+        Update,
+        (
+            handle_cursor,
+            fps_look,
+            fps_move,
+            mouse_interact,
+            scroll_distance,
+        )
+            .before(ObjectInteractionSystems::ReadCommands),
+    );
     app.add_observer(on_acquire);
     app.add_observer(on_release);
     app.add_observer(on_throw);
@@ -151,6 +183,155 @@ fn main() {
     );
 
     app.run();
+}
+
+// ---------------------------------------------------------------------------
+// Cursor grab
+// ---------------------------------------------------------------------------
+
+fn grab_cursor(mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>) {
+    cursor.grab_mode = CursorGrabMode::Locked;
+    cursor.visible = false;
+}
+
+fn handle_cursor(
+    keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>,
+    mut grabbed: ResMut<CursorGrabbed>,
+) {
+    if keys.just_pressed(KeyCode::Escape) {
+        cursor.grab_mode = CursorGrabMode::None;
+        cursor.visible = true;
+        grabbed.0 = false;
+    }
+    if !grabbed.0
+        && (mouse.just_pressed(MouseButton::Left) || mouse.just_pressed(MouseButton::Right))
+    {
+        cursor.grab_mode = CursorGrabMode::Locked;
+        cursor.visible = false;
+        grabbed.0 = true;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FPS look & movement
+// ---------------------------------------------------------------------------
+
+fn fps_look(
+    grabbed: Res<CursorGrabbed>,
+    mut motion: MessageReader<MouseMotion>,
+    mut q: Query<(&mut FpsController, &mut Transform), With<Interactor>>,
+) {
+    if !grabbed.0 {
+        motion.clear();
+        return;
+    }
+    let Ok((mut ctrl, mut transform)) = q.single_mut() else {
+        motion.clear();
+        return;
+    };
+    for event in motion.read() {
+        ctrl.yaw -= event.delta.x * ctrl.sensitivity;
+        ctrl.pitch = (ctrl.pitch - event.delta.y * ctrl.sensitivity)
+            .clamp(-89.0_f32.to_radians(), 89.0_f32.to_radians());
+    }
+    transform.rotation = Quat::from_euler(EulerRot::YXZ, ctrl.yaw, ctrl.pitch, 0.0);
+}
+
+fn fps_move(
+    grabbed: Res<CursorGrabbed>,
+    keys: Res<ButtonInput<KeyCode>>,
+    time: Res<Time>,
+    mut q: Query<(&FpsController, &mut Transform), With<Interactor>>,
+) {
+    if !grabbed.0 {
+        return;
+    }
+    let Ok((ctrl, mut transform)) = q.single_mut() else {
+        return;
+    };
+    let mut direction = Vec3::ZERO;
+    if keys.pressed(KeyCode::KeyW) {
+        direction += *transform.forward();
+    }
+    if keys.pressed(KeyCode::KeyS) {
+        direction += *transform.back();
+    }
+    if keys.pressed(KeyCode::KeyA) {
+        direction += *transform.left();
+    }
+    if keys.pressed(KeyCode::KeyD) {
+        direction += *transform.right();
+    }
+    direction.y = 0.0;
+    if let Some(dir) = direction.try_normalize() {
+        let speed = if keys.pressed(KeyCode::ShiftLeft) {
+            ctrl.speed * 2.0
+        } else {
+            ctrl.speed
+        };
+        transform.translation += dir * speed * time.delta_secs();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Mouse-based interaction
+// ---------------------------------------------------------------------------
+
+fn mouse_interact(
+    grabbed: Res<CursorGrabbed>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    q: Query<(Entity, &ObjectInteractionState), With<Interactor>>,
+    mut acquire: MessageWriter<TryAcquireObject>,
+    mut throw: MessageWriter<ThrowHeldObject>,
+    mut release: MessageWriter<ReleaseHeldObject>,
+) {
+    if !grabbed.0 {
+        return;
+    }
+    let Ok((interactor, state)) = q.single() else {
+        return;
+    };
+    if mouse.just_pressed(MouseButton::Left) {
+        match *state {
+            ObjectInteractionState::Holding(_) => {
+                throw.write(ThrowHeldObject {
+                    interactor,
+                    impulse_scale: 1.0,
+                    angular_impulse_scale: 1.0,
+                });
+            }
+            _ => {
+                acquire.write(TryAcquireObject { interactor });
+            }
+        }
+    }
+    if mouse.just_pressed(MouseButton::Right) {
+        release.write(ReleaseHeldObject { interactor });
+    }
+}
+
+fn scroll_distance(
+    grabbed: Res<CursorGrabbed>,
+    mut scroll: MessageReader<MouseWheel>,
+    q: Query<Entity, With<Interactor>>,
+    mut w: MessageWriter<AdjustHoldDistance>,
+) {
+    if !grabbed.0 {
+        scroll.clear();
+        return;
+    }
+    let Ok(interactor) = q.single() else {
+        scroll.clear();
+        return;
+    };
+    for event in scroll.read() {
+        w.write(AdjustHoldDistance {
+            interactor,
+            delta: event.y * 0.3,
+        });
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -186,54 +367,66 @@ fn setup_scene(
     // Ground
     commands.spawn((
         Name::new("Ground"),
-        Mesh3d(meshes.add(Plane3d::default().mesh().size(24.0, 24.0))),
+        Mesh3d(meshes.add(Plane3d::default().mesh().size(30.0, 30.0))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: Color::srgb(0.11, 0.13, 0.12),
             perceptual_roughness: 1.0,
             ..default()
         })),
         RigidBody::Static,
-        Collider::cuboid(12.0, 0.1, 12.0),
+        Collider::cuboid(15.0, 0.1, 15.0),
         Transform::from_xyz(0.0, -0.1, 0.0),
     ));
 
-    // Backdrop
+    // Walls
+    let wall_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.07, 0.08, 0.1),
+        perceptual_roughness: 0.95,
+        ..default()
+    });
     commands.spawn((
-        Name::new("Backdrop"),
-        Mesh3d(meshes.add(Cuboid::new(12.0, 5.0, 0.2))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.07, 0.08, 0.1),
-            perceptual_roughness: 0.95,
-            ..default()
-        })),
+        Name::new("Back Wall"),
+        Mesh3d(meshes.add(Cuboid::new(14.0, 5.0, 0.2))),
+        MeshMaterial3d(wall_material.clone()),
         RigidBody::Static,
-        Collider::cuboid(6.0, 2.5, 0.1),
-        Transform::from_xyz(0.0, 2.0, -4.8),
+        Collider::cuboid(7.0, 2.5, 0.1),
+        Transform::from_xyz(0.0, 2.0, -6.0),
     ));
 
-    // -- Interactor with 120 kg mass limit (gravity-gun strength) -----------
+    // -- Interactor (FPS player) with 120 kg mass limit -------------------------
+    let start_pos = Vec3::new(0.0, 1.45, 5.4);
+    let look_at = Vec3::new(0.0, 0.9, 0.0);
+    let initial_transform = Transform::from_translation(start_pos).looking_at(look_at, Vec3::Y);
+    let (yaw, pitch, _) = initial_transform.rotation.to_euler(EulerRot::YXZ);
+
     commands
         .spawn((
             Name::new("Interactor"),
             Interactor,
             InputCtx,
+            FpsController {
+                yaw,
+                pitch,
+                speed: 5.0,
+                sensitivity: 0.002,
+            },
             ObjectInteractor {
                 max_target_mass: Some(120.0),
                 ..default()
             },
             HoldDistance(3.1),
             CollisionLayers::new(0b0010, LayerMask::ALL),
-            Transform::from_xyz(0.0, 1.45, 5.4).looking_at(Vec3::new(0.0, 0.9, 0.0), Vec3::Y),
+            initial_transform,
             GlobalTransform::IDENTITY,
             Visibility::Visible,
             actions!(InputCtx[
                 (Action::<AcquireAction>::new(), bindings![KeyCode::KeyE]),
                 (Action::<ReleaseAction>::new(), bindings![KeyCode::KeyR]),
-                (Action::<ThrowAction>::new(), bindings![KeyCode::KeyF, MouseButton::Left]),
+                (Action::<ThrowAction>::new(), bindings![KeyCode::KeyF]),
                 (Action::<NearAction>::new(), bindings![KeyCode::KeyZ]),
                 (Action::<FarAction>::new(), bindings![KeyCode::KeyX]),
-                (Action::<RotateLeftAction>::new(), bindings![KeyCode::KeyA]),
-                (Action::<RotateRightAction>::new(), bindings![KeyCode::KeyD]),
+                (Action::<RotateLeftAction>::new(), bindings![KeyCode::KeyQ]),
+                (Action::<RotateRightAction>::new(), bindings![KeyCode::KeyC]),
                 (Action::<CycleAction>::new(), bindings![KeyCode::Tab]),
             ]),
         ))
@@ -295,26 +488,61 @@ fn setup_scene(
         },
     );
 
+    // Extra heavy barrel to test mass limits
+    spawn_prop(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        PropDef {
+            name: "Heavy Barrel",
+            mesh: Mesh::from(Cylinder::new(0.4, 1.0)),
+            collider: Collider::cylinder(0.4, 1.0),
+            position: Vec3::new(3.0, 0.8, -2.0),
+            base_color: Color::srgb(0.55, 0.28, 0.22),
+            mass: 100.0,
+            extras: InteractionMassLimitOverride(100.0),
+        },
+    );
+
     // HUD
     commands.spawn((
         Name::new("HUD"),
         Text::new(
             "object_interaction / gravity_gun\n\
-             Tuned for stronger pull and bigger throws. The heavy spool is intentionally liftable.\n\
-             E acquire | R release | F throw | Z/X distance | A/D rotate | Tab cycle",
+             WASD move | Mouse look | Shift sprint | Esc release cursor\n\
+             LMB grab/throw | RMB drop | Scroll distance\n\
+             E grab | R drop | F throw | Q/C rotate | Z/X distance | Tab cycle\n\
+             Tuned for stronger pull (28 impulse) and 120 kg mass limit.",
         ),
         Node {
             position_type: PositionType::Absolute,
             left: px(18.0),
             top: px(16.0),
-            width: px(560.0),
+            width: px(600.0),
             ..default()
         },
         TextFont {
-            font_size: 17.0,
+            font_size: 16.0,
             ..default()
         },
         TextColor(Color::WHITE),
+    ));
+
+    // Crosshair
+    commands.spawn((
+        Name::new("Crosshair"),
+        Text::new("+"),
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Percent(50.0),
+            top: Val::Percent(50.0),
+            ..default()
+        },
+        TextFont {
+            font_size: 24.0,
+            ..default()
+        },
+        TextColor(Color::srgba(1.0, 1.0, 1.0, 0.6)),
     ));
 }
 
@@ -367,7 +595,7 @@ fn spawn_prop<B: Bundle>(
 }
 
 // ---------------------------------------------------------------------------
-// Input observers
+// Input observers (keyboard)
 // ---------------------------------------------------------------------------
 
 fn on_acquire(trigger: On<Start<AcquireAction>>, mut w: MessageWriter<TryAcquireObject>) {
@@ -452,15 +680,14 @@ fn tint_props(
     };
 
     for (entity, visual, mat, held_by) in &q_props {
-        let color = if held == Some(entity)
-            || held_by.is_some_and(|hb| q_interactor.get(hb.0).is_ok())
-        {
-            Color::srgb(0.28, 0.96, 0.58)
-        } else if targeted == Some(entity) {
-            Color::srgb(0.98, 0.80, 0.24)
-        } else {
-            visual.base_color
-        };
+        let color =
+            if held == Some(entity) || held_by.is_some_and(|hb| q_interactor.get(hb.0).is_ok()) {
+                Color::srgb(0.28, 0.96, 0.58)
+            } else if targeted == Some(entity) {
+                Color::srgb(0.98, 0.80, 0.24)
+            } else {
+                visual.base_color
+            };
         if let Some(material) = materials.get_mut(&mat.0) {
             material.base_color = color;
         }

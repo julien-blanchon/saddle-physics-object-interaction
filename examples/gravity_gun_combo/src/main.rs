@@ -4,8 +4,8 @@ use saddle_pane::prelude::*;
 use saddle_physics_destruction::{
     ApplyDestructionDamage, ChunkGroupDetached, CuboidAnchorPreset, CuboidFractureBuilder,
     Destructible, DestructionAssetHandle, DestructionConfig, DestructionDiagnostics,
-    DestructionPlugin, DestructionState, FracturedAsset, Fragment, FragmentSpawnData,
-    MaterialHint, RootVisualMode, build_fragment_mesh,
+    DestructionPlugin, DestructionState, FracturedAsset, Fragment, FragmentSpawnData, MaterialHint,
+    RootVisualMode, build_fragment_mesh,
 };
 use saddle_physics_object_interaction::{HeldBy, ObjectThrown};
 use saddle_physics_object_interaction_example_common as common;
@@ -136,24 +136,28 @@ fn setup_combo_room(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    commands.entity(demo_world.light_crate).insert(ExplosiveBarrel {
-        home: Vec3::new(0.0, 0.75, 0.0),
-        armed: false,
-    });
+    commands
+        .entity(demo_world.light_crate)
+        .insert(ExplosiveBarrel {
+            home: Vec3::new(0.0, 0.75, 0.0),
+            armed: false,
+        });
 
-    commands.entity(demo_world.light_crate).with_children(|parent| {
-        parent.spawn((
-            Name::new("Explosive Barrel Beacon"),
-            PointLight {
-                color: Color::srgb(1.0, 0.52, 0.28),
-                intensity: 48_000.0,
-                range: 5.0,
-                shadows_enabled: false,
-                ..default()
-            },
-            Transform::from_xyz(0.0, 0.9, 0.0),
-        ));
-    });
+    commands
+        .entity(demo_world.light_crate)
+        .with_children(|parent| {
+            parent.spawn((
+                Name::new("Explosive Barrel Beacon"),
+                PointLight {
+                    color: Color::srgb(1.0, 0.52, 0.28),
+                    intensity: 48_000.0,
+                    range: 5.0,
+                    shadows_enabled: false,
+                    ..default()
+                },
+                Transform::from_xyz(0.0, 0.9, 0.0),
+            ));
+        });
 
     let mut barrier_builder =
         CuboidFractureBuilder::new(Vec3::new(3.4, 2.6, 0.45), UVec3::new(4, 3, 1));

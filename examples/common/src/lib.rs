@@ -4,11 +4,17 @@ use avian3d::prelude::{
     AngularDamping, Collider, CollisionLayers, LayerMask, LinearDamping, Mass, PhysicsPlugins,
     RigidBody, TransformInterpolation,
 };
-use bevy::{app::AppExit, prelude::*};
-use bevy_flair::FlairPlugin;
+use bevy::{
+    app::AppExit,
+    input::mouse::{MouseMotion, MouseWheel},
+    prelude::*,
+    window::{CursorGrabMode, CursorOptions, PrimaryWindow},
+};
 use bevy_enhanced_input::prelude::{Cancel as InputCancel, *};
+use bevy_flair::FlairPlugin;
 use bevy_input_focus::{InputDispatchPlugin, tab_navigation::TabNavigationPlugin};
 use bevy_ui_widgets::UiWidgetsPlugins;
+use saddle_pane::prelude::*;
 use saddle_physics_object_interaction::{
     AdjustHoldDistance, CycleDirection, CycleInteractionTarget, HeldBy, HoldDistance,
     HoldOrientationMode, HoldOrientationOverride, HoldPointOverride, InteractableBody,
@@ -20,7 +26,6 @@ use saddle_physics_object_interaction::{
     SetSurfacePlacementMode, SurfacePlacementMode, ThrowHeldObject, ThrowResponseOverride,
     TryAcquireObject,
 };
-use saddle_pane::prelude::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DemoMode {
@@ -241,6 +246,17 @@ struct DemoInteractor;
 struct DemoInputContext;
 
 #[derive(Component)]
+pub struct FpsController {
+    pub yaw: f32,
+    pub pitch: f32,
+    pub speed: f32,
+    pub sensitivity: f32,
+}
+
+#[derive(Resource)]
+struct CursorGrabbed(bool);
+
+#[derive(Component)]
 struct DemoOverlay;
 
 #[derive(Component)]
@@ -413,6 +429,7 @@ pub fn configure_app(app: &mut App, mode: DemoMode) {
         draw_gizmos: matches!(mode, DemoMode::Lab),
     });
     app.insert_resource(DemoModeResource(mode));
+    app.insert_resource(CursorGrabbed(true));
     app.init_resource::<DemoDiagnostics>();
     app.register_type::<DemoDiagnostics>();
     app.register_type::<DemoWorld>();
@@ -460,7 +477,18 @@ pub fn configure_app(app: &mut App, mode: DemoMode) {
     app.add_observer(on_occlusion_station);
     app.add_observer(on_placement_station);
     app.add_observer(on_toggle_placement_mode);
-    app.add_systems(Startup, setup_scene);
+    app.add_systems(Startup, (setup_scene, grab_cursor));
+    app.add_systems(
+        Update,
+        (
+            handle_cursor,
+            fps_look,
+            fps_move,
+            mouse_interact,
+            scroll_distance,
+        )
+            .before(ObjectInteractionSystems::ReadCommands),
+    );
     app.add_systems(
         Update,
         (
@@ -511,9 +539,14 @@ fn exit_after_timeout(
 pub fn set_station(world: &mut World, station: DemoStation) {
     let interactor = world.resource::<DemoWorld>().interactor;
     let transform = station_transform(station);
+    let (yaw, pitch, _) = transform.rotation.to_euler(EulerRot::YXZ);
     world
         .entity_mut(interactor)
         .insert((transform, GlobalTransform::from(transform)));
+    if let Some(mut fps) = world.entity_mut(interactor).get_mut::<FpsController>() {
+        fps.yaw = yaw;
+        fps.pitch = pitch;
+    }
     world.resource_mut::<DemoDiagnostics>().station = Some(station);
 }
 
@@ -653,11 +686,18 @@ fn setup_scene(
         .id();
 
     let actor_transform = station_transform(mode.0.initial_station());
+    let (yaw, pitch, _) = actor_transform.rotation.to_euler(EulerRot::YXZ);
     let interactor = commands
         .spawn((
             Name::new("Interactor"),
             DemoInteractor,
             DemoInputContext,
+            FpsController {
+                yaw,
+                pitch,
+                speed: 5.0,
+                sensitivity: 0.002,
+            },
             ObjectInteractor {
                 max_target_mass: mode.0.interactor_max_mass(),
                 orientation_mode: mode.0.interactor_orientation(),
@@ -665,10 +705,7 @@ fn setup_scene(
             },
             HoldDistance(mode.0.config().hold.default_distance),
             CollisionLayers::new(0b0010, LayerMask::ALL),
-            Transform::from_translation(actor_transform.translation).looking_at(
-                actor_transform.translation + actor_transform.forward() * 4.0,
-                Vec3::Y,
-            ),
+            actor_transform,
             GlobalTransform::IDENTITY,
             Visibility::Visible,
             actions!(DemoInputContext[
@@ -682,7 +719,7 @@ fn setup_scene(
                 ),
                 (
                     Action::<ThrowAction>::new(),
-                    bindings![KeyCode::KeyF, MouseButton::Left],
+                    bindings![KeyCode::KeyF],
                 ),
                 (
                     Action::<NearAction>::new(),
@@ -694,11 +731,11 @@ fn setup_scene(
                 ),
                 (
                     Action::<RotateLeftAction>::new(),
-                    bindings![KeyCode::KeyA],
+                    bindings![KeyCode::KeyV],
                 ),
                 (
                     Action::<RotateRightAction>::new(),
-                    bindings![KeyCode::KeyD],
+                    bindings![KeyCode::KeyB],
                 ),
                 (
                     Action::<CycleAction>::new(),
@@ -842,6 +879,23 @@ fn setup_scene(
         TextColor(Color::WHITE),
     ));
 
+    // Crosshair
+    commands.spawn((
+        Name::new("Crosshair"),
+        Text::new("+"),
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Percent(50.0),
+            top: Val::Percent(50.0),
+            ..default()
+        },
+        TextFont {
+            font_size: 24.0,
+            ..default()
+        },
+        TextColor(Color::srgba(1.0, 1.0, 1.0, 0.6)),
+    ));
+
     commands.insert_resource(DemoWorld {
         interactor,
         light_crate,
@@ -913,6 +967,151 @@ fn spawn_prop<B: Bundle>(
 
     entity.id()
 }
+
+// ---------------------------------------------------------------------------
+// Cursor grab & FPS movement
+// ---------------------------------------------------------------------------
+
+fn grab_cursor(mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>) {
+    cursor.grab_mode = CursorGrabMode::Locked;
+    cursor.visible = false;
+}
+
+fn handle_cursor(
+    keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>,
+    mut grabbed: ResMut<CursorGrabbed>,
+) {
+    if keys.just_pressed(KeyCode::Escape) {
+        cursor.grab_mode = CursorGrabMode::None;
+        cursor.visible = true;
+        grabbed.0 = false;
+    }
+    if !grabbed.0
+        && (mouse.just_pressed(MouseButton::Left) || mouse.just_pressed(MouseButton::Right))
+    {
+        cursor.grab_mode = CursorGrabMode::Locked;
+        cursor.visible = false;
+        grabbed.0 = true;
+    }
+}
+
+fn fps_look(
+    grabbed: Res<CursorGrabbed>,
+    mut motion: MessageReader<MouseMotion>,
+    mut q: Query<(&mut FpsController, &mut Transform), With<DemoInteractor>>,
+) {
+    if !grabbed.0 {
+        motion.clear();
+        return;
+    }
+    let Ok((mut ctrl, mut transform)) = q.single_mut() else {
+        motion.clear();
+        return;
+    };
+    for event in motion.read() {
+        ctrl.yaw -= event.delta.x * ctrl.sensitivity;
+        ctrl.pitch = (ctrl.pitch - event.delta.y * ctrl.sensitivity)
+            .clamp(-89.0_f32.to_radians(), 89.0_f32.to_radians());
+    }
+    transform.rotation = Quat::from_euler(EulerRot::YXZ, ctrl.yaw, ctrl.pitch, 0.0);
+}
+
+fn fps_move(
+    grabbed: Res<CursorGrabbed>,
+    keys: Res<ButtonInput<KeyCode>>,
+    time: Res<Time>,
+    mut q: Query<(&FpsController, &mut Transform), With<DemoInteractor>>,
+) {
+    if !grabbed.0 {
+        return;
+    }
+    let Ok((ctrl, mut transform)) = q.single_mut() else {
+        return;
+    };
+    let mut direction = Vec3::ZERO;
+    if keys.pressed(KeyCode::KeyW) {
+        direction += *transform.forward();
+    }
+    if keys.pressed(KeyCode::KeyS) {
+        direction += *transform.back();
+    }
+    if keys.pressed(KeyCode::KeyA) {
+        direction += *transform.left();
+    }
+    if keys.pressed(KeyCode::KeyD) {
+        direction += *transform.right();
+    }
+    direction.y = 0.0;
+    if let Some(dir) = direction.try_normalize() {
+        let speed = if keys.pressed(KeyCode::ShiftLeft) {
+            ctrl.speed * 2.0
+        } else {
+            ctrl.speed
+        };
+        transform.translation += dir * speed * time.delta_secs();
+    }
+}
+
+fn mouse_interact(
+    grabbed: Res<CursorGrabbed>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    q: Query<(Entity, &ObjectInteractionState), With<DemoInteractor>>,
+    mut acquire: MessageWriter<TryAcquireObject>,
+    mut throw: MessageWriter<ThrowHeldObject>,
+    mut release: MessageWriter<ReleaseHeldObject>,
+) {
+    if !grabbed.0 {
+        return;
+    }
+    let Ok((interactor, state)) = q.single() else {
+        return;
+    };
+    if mouse.just_pressed(MouseButton::Left) {
+        match *state {
+            ObjectInteractionState::Holding(_) => {
+                throw.write(ThrowHeldObject {
+                    interactor,
+                    impulse_scale: 1.0,
+                    angular_impulse_scale: 1.0,
+                });
+            }
+            _ => {
+                acquire.write(TryAcquireObject { interactor });
+            }
+        }
+    }
+    if mouse.just_pressed(MouseButton::Right) {
+        release.write(ReleaseHeldObject { interactor });
+    }
+}
+
+fn scroll_distance(
+    grabbed: Res<CursorGrabbed>,
+    mut scroll: MessageReader<MouseWheel>,
+    q: Query<Entity, With<DemoInteractor>>,
+    mut w: MessageWriter<AdjustHoldDistance>,
+) {
+    if !grabbed.0 {
+        scroll.clear();
+        return;
+    }
+    let Ok(interactor) = q.single() else {
+        scroll.clear();
+        return;
+    };
+    for event in scroll.read() {
+        w.write(AdjustHoldDistance {
+            interactor,
+            delta: event.y * 0.3,
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Station teleport
+// ---------------------------------------------------------------------------
 
 fn station_transform(station: DemoStation) -> Transform {
     let (eye, target) = match station {
@@ -1139,7 +1338,10 @@ fn sync_runtime_to_pane(
         placement_distance,
         config.hold.surface_placement.max_distance
     );
-    sync_field!(placement_offset, config.hold.surface_placement.surface_offset);
+    sync_field!(
+        placement_offset,
+        config.hold.surface_placement.surface_offset
+    );
     sync_field!(
         align_to_surface,
         config.hold.surface_placement.align_to_surface
@@ -1316,7 +1518,7 @@ fn update_overlay(
     mut overlay: Single<&mut Text, With<DemoOverlay>>,
 ) {
     **overlay = Text::new(format!(
-        "{}\n{}\nstation: {}\nplacement mode: {}\ntarget: {}\nheld: {}\nhold distance: {:.2}\nacquired: {} released: {} thrown: {}\nlast release: {}\nlast failure: {}\nlast throw impulse: {:.2?}",
+        "{}\nWASD move | Mouse look | Shift sprint | LMB grab/throw | RMB drop | Scroll dist\n{}\nstation: {}\nplacement mode: {}\ntarget: {}\nheld: {}\nhold distance: {:.2}\nacquired: {} released: {} thrown: {}\nlast release: {}\nlast failure: {}\nlast throw impulse: {:.2?}",
         mode.0.title(),
         mode.0.subtitle(),
         diagnostics

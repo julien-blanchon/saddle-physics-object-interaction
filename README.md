@@ -165,15 +165,35 @@ New holds now support two higher-level presentation layers without giving up the
 
 ## Examples
 
+All examples feature FPS-style movement (WASD + mouse look) so you can walk around the scene and interact with objects naturally. Mouse controls: LMB grab/throw, RMB release, scroll wheel adjusts hold distance.
+
 | Example | Run | What it demonstrates |
 | --- | --- | --- |
-| `basic` | `cargo run -p saddle-physics-object-interaction-example-basic` | Message-driven acquire, hold, drop, throw, rotate, and candidate cycling |
-| `gravity_gun` | `cargo run -p saddle-physics-object-interaction-example-gravity_gun` | Stronger pull/throw tuning and higher mass budget |
-| `gravity_gun_combo` | `cargo run -p saddle-physics-object-interaction-example-gravity_gun_combo` | Cross-crate gravity-gun puzzle room using git-wired destruction and transform interpolation crates |
+| `basic` | `cargo run -p saddle-physics-object-interaction-example-basic` | Physics playground with FPS movement, mouse interaction, varied props in a room |
+| `gravity_gun` | `cargo run -p saddle-physics-object-interaction-example-gravity_gun` | Stronger pull/throw tuning (28 impulse), 120 kg mass limit, heavy objects |
+| `gravity_gun_combo` | `cargo run -p saddle-physics-object-interaction-example-gravity_gun_combo` | Cross-crate gravity-gun puzzle room using destruction and transform interpolation |
 | `inspect_rotate` | `cargo run -p saddle-physics-object-interaction-example-inspect_rotate` | Close hold distance, aligned rotation, and inspection feel |
-| `picking_integration` | `cargo run -p saddle-physics-object-interaction-example-picking_integration` | Cursor-driven acquisition using Bevy mesh picking |
-| `surface_placement` | `cargo run -p saddle-physics-object-interaction-example-surface-placement` | Wall/shelf placement flow with pull-to-hand easing and live pane tuning |
-| `saddle-physics-object-interaction-lab` | `cargo run -p saddle-physics-object-interaction-lab` | Rich crate-local BRP/E2E verification app |
+| `picking_integration` | `cargo run -p saddle-physics-object-interaction-example-picking_integration` | Click-to-acquire using Bevy mesh picking, with FPS mode toggle (RMB) |
+| `surface_placement` | `cargo run -p saddle-physics-object-interaction-example-surface-placement` | Wall/shelf placement flow with pull-to-hand easing (G to toggle placement) |
+| `saddle-physics-object-interaction-lab` | `cargo run -p saddle-physics-object-interaction-lab` | Rich crate-local BRP/E2E verification app with station teleport (1-5) |
+
+### Controls (all examples)
+
+| Input | Action |
+| --- | --- |
+| WASD | Move |
+| Mouse | Look |
+| Shift | Sprint |
+| LMB | Grab (idle) / Throw (holding) |
+| RMB | Release |
+| Scroll | Adjust hold distance |
+| E | Grab (keyboard) |
+| R | Release (keyboard) |
+| F | Throw (keyboard) |
+| Q/C | Rotate held object |
+| Z/X | Adjust hold distance |
+| Tab | Cycle targets |
+| Esc | Release cursor |
 
 All example workspaces include `saddle-pane` so the hold, pull-to-hand, throw, placement, and combo-room parameters can be edited live while the demo runs.
 

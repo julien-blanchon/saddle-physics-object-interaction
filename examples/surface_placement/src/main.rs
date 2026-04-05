@@ -1,14 +1,19 @@
 //! Surface placement: acquire a prop, then snap it onto a wall or shelf.
 //!
-//! Press **E** to acquire, move toward the placement wall, then press **G** to
+//! Walk around with **WASD**, look with **mouse**. **Shift** to sprint.
+//! **E** or **LMB** to acquire, move toward the placement wall, then press **G** to
 //! toggle surface-placement mode. The held prop will snap onto the nearest
-//! surface. **R** to release, **F** to throw.
+//! surface. **R** or **RMB** to release, **F** to throw.
 
 use avian3d::prelude::{
     AngularDamping, Collider, CollisionLayers, LayerMask, LinearDamping, Mass, PhysicsPlugins,
     RigidBody, TransformInterpolation,
 };
-use bevy::prelude::*;
+use bevy::{
+    input::mouse::{MouseMotion, MouseWheel},
+    prelude::*,
+    window::{CursorGrabMode, CursorOptions, PrimaryWindow},
+};
 use bevy_enhanced_input::prelude::*;
 use bevy_flair::FlairPlugin;
 use bevy_input_focus::{InputDispatchPlugin, tab_navigation::TabNavigationPlugin};
@@ -16,15 +21,14 @@ use bevy_ui_widgets::UiWidgetsPlugins;
 use saddle_pane::prelude::*;
 use saddle_physics_object_interaction::{
     AdjustHoldDistance, CycleDirection, CycleInteractionTarget, HeldBy, HoldDistance,
-    InteractableBody, InteractionTarget, ObjectInteractionConfig,
-    ObjectInteractionDebugSettings, ObjectInteractionPlugin, ObjectInteractionState,
-    ObjectInteractionSystems, ObjectInteractor, PreferredHoldDistance, ReleaseHeldObject,
-    RotateHeldObject, SetSurfacePlacementMode, SurfacePlacementMode, ThrowHeldObject,
-    ThrowResponseOverride, TryAcquireObject,
+    InteractableBody, InteractionTarget, ObjectInteractionConfig, ObjectInteractionDebugSettings,
+    ObjectInteractionPlugin, ObjectInteractionState, ObjectInteractionSystems, ObjectInteractor,
+    PreferredHoldDistance, ReleaseHeldObject, RotateHeldObject, SetSurfacePlacementMode,
+    SurfacePlacementMode, ThrowHeldObject, ThrowResponseOverride, TryAcquireObject,
 };
 
 // ---------------------------------------------------------------------------
-// Input actions
+// Input actions (keyboard interaction — NOT movement)
 // ---------------------------------------------------------------------------
 
 #[derive(InputAction)]
@@ -65,6 +69,21 @@ struct TogglePlacementAction;
 
 #[derive(Component)]
 struct InputCtx;
+
+// ---------------------------------------------------------------------------
+// FPS controller
+// ---------------------------------------------------------------------------
+
+#[derive(Component)]
+struct FpsController {
+    yaw: f32,
+    pitch: f32,
+    speed: f32,
+    sensitivity: f32,
+}
+
+#[derive(Resource)]
+struct CursorGrabbed(bool);
 
 // ---------------------------------------------------------------------------
 // Markers
@@ -130,6 +149,7 @@ fn main() {
         enabled: true,
         draw_gizmos: false,
     });
+    app.insert_resource(CursorGrabbed(true));
 
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
@@ -151,7 +171,18 @@ fn main() {
     app.add_input_context::<InputCtx>();
     app.add_plugins(ObjectInteractionPlugin::default());
 
-    app.add_systems(Startup, setup_scene);
+    app.add_systems(Startup, (setup_scene, grab_cursor));
+    app.add_systems(
+        Update,
+        (
+            handle_cursor,
+            fps_look,
+            fps_move,
+            mouse_interact,
+            scroll_distance,
+        )
+            .before(ObjectInteractionSystems::ReadCommands),
+    );
     app.add_observer(on_acquire);
     app.add_observer(on_release);
     app.add_observer(on_throw);
@@ -167,6 +198,155 @@ fn main() {
     );
 
     app.run();
+}
+
+// ---------------------------------------------------------------------------
+// Cursor grab
+// ---------------------------------------------------------------------------
+
+fn grab_cursor(mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>) {
+    cursor.grab_mode = CursorGrabMode::Locked;
+    cursor.visible = false;
+}
+
+fn handle_cursor(
+    keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>,
+    mut grabbed: ResMut<CursorGrabbed>,
+) {
+    if keys.just_pressed(KeyCode::Escape) {
+        cursor.grab_mode = CursorGrabMode::None;
+        cursor.visible = true;
+        grabbed.0 = false;
+    }
+    if !grabbed.0
+        && (mouse.just_pressed(MouseButton::Left) || mouse.just_pressed(MouseButton::Right))
+    {
+        cursor.grab_mode = CursorGrabMode::Locked;
+        cursor.visible = false;
+        grabbed.0 = true;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FPS look & movement
+// ---------------------------------------------------------------------------
+
+fn fps_look(
+    grabbed: Res<CursorGrabbed>,
+    mut motion: MessageReader<MouseMotion>,
+    mut q: Query<(&mut FpsController, &mut Transform), With<Interactor>>,
+) {
+    if !grabbed.0 {
+        motion.clear();
+        return;
+    }
+    let Ok((mut ctrl, mut transform)) = q.single_mut() else {
+        motion.clear();
+        return;
+    };
+    for event in motion.read() {
+        ctrl.yaw -= event.delta.x * ctrl.sensitivity;
+        ctrl.pitch = (ctrl.pitch - event.delta.y * ctrl.sensitivity)
+            .clamp(-89.0_f32.to_radians(), 89.0_f32.to_radians());
+    }
+    transform.rotation = Quat::from_euler(EulerRot::YXZ, ctrl.yaw, ctrl.pitch, 0.0);
+}
+
+fn fps_move(
+    grabbed: Res<CursorGrabbed>,
+    keys: Res<ButtonInput<KeyCode>>,
+    time: Res<Time>,
+    mut q: Query<(&FpsController, &mut Transform), With<Interactor>>,
+) {
+    if !grabbed.0 {
+        return;
+    }
+    let Ok((ctrl, mut transform)) = q.single_mut() else {
+        return;
+    };
+    let mut direction = Vec3::ZERO;
+    if keys.pressed(KeyCode::KeyW) {
+        direction += *transform.forward();
+    }
+    if keys.pressed(KeyCode::KeyS) {
+        direction += *transform.back();
+    }
+    if keys.pressed(KeyCode::KeyA) {
+        direction += *transform.left();
+    }
+    if keys.pressed(KeyCode::KeyD) {
+        direction += *transform.right();
+    }
+    direction.y = 0.0;
+    if let Some(dir) = direction.try_normalize() {
+        let speed = if keys.pressed(KeyCode::ShiftLeft) {
+            ctrl.speed * 2.0
+        } else {
+            ctrl.speed
+        };
+        transform.translation += dir * speed * time.delta_secs();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Mouse-based interaction
+// ---------------------------------------------------------------------------
+
+fn mouse_interact(
+    grabbed: Res<CursorGrabbed>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    q: Query<(Entity, &ObjectInteractionState), With<Interactor>>,
+    mut acquire: MessageWriter<TryAcquireObject>,
+    mut throw: MessageWriter<ThrowHeldObject>,
+    mut release: MessageWriter<ReleaseHeldObject>,
+) {
+    if !grabbed.0 {
+        return;
+    }
+    let Ok((interactor, state)) = q.single() else {
+        return;
+    };
+    if mouse.just_pressed(MouseButton::Left) {
+        match *state {
+            ObjectInteractionState::Holding(_) => {
+                throw.write(ThrowHeldObject {
+                    interactor,
+                    impulse_scale: 1.0,
+                    angular_impulse_scale: 1.0,
+                });
+            }
+            _ => {
+                acquire.write(TryAcquireObject { interactor });
+            }
+        }
+    }
+    if mouse.just_pressed(MouseButton::Right) {
+        release.write(ReleaseHeldObject { interactor });
+    }
+}
+
+fn scroll_distance(
+    grabbed: Res<CursorGrabbed>,
+    mut scroll: MessageReader<MouseWheel>,
+    q: Query<Entity, With<Interactor>>,
+    mut w: MessageWriter<AdjustHoldDistance>,
+) {
+    if !grabbed.0 {
+        scroll.clear();
+        return;
+    }
+    let Ok(interactor) = q.single() else {
+        scroll.clear();
+        return;
+    };
+    for event in scroll.read() {
+        w.write(AdjustHoldDistance {
+            interactor,
+            delta: event.y * 0.3,
+        });
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -268,29 +448,40 @@ fn setup_scene(
             ));
         });
 
-    // -- Interactor facing the crate -----------------------------------------
+    // -- Interactor (FPS player) facing the crate ----------------------------
+    let start_pos = Vec3::new(0.0, 1.45, 5.4);
+    let look_at = Vec3::new(0.0, 0.9, 0.0);
+    let initial_transform = Transform::from_translation(start_pos).looking_at(look_at, Vec3::Y);
+    let (yaw, pitch, _) = initial_transform.rotation.to_euler(EulerRot::YXZ);
+
     commands
         .spawn((
             Name::new("Interactor"),
             Interactor,
             InputCtx,
+            FpsController {
+                yaw,
+                pitch,
+                speed: 5.0,
+                sensitivity: 0.002,
+            },
             ObjectInteractor {
                 max_target_mass: Some(45.0),
                 ..default()
             },
             HoldDistance(2.7),
             CollisionLayers::new(0b0010, LayerMask::ALL),
-            Transform::from_xyz(0.0, 1.45, 5.4).looking_at(Vec3::new(0.0, 0.9, 0.0), Vec3::Y),
+            initial_transform,
             GlobalTransform::IDENTITY,
             Visibility::Visible,
             actions!(InputCtx[
                 (Action::<AcquireAction>::new(), bindings![KeyCode::KeyE]),
                 (Action::<ReleaseAction>::new(), bindings![KeyCode::KeyR]),
-                (Action::<ThrowAction>::new(), bindings![KeyCode::KeyF, MouseButton::Left]),
+                (Action::<ThrowAction>::new(), bindings![KeyCode::KeyF]),
                 (Action::<NearAction>::new(), bindings![KeyCode::KeyZ]),
                 (Action::<FarAction>::new(), bindings![KeyCode::KeyX]),
-                (Action::<RotateLeftAction>::new(), bindings![KeyCode::KeyA]),
-                (Action::<RotateRightAction>::new(), bindings![KeyCode::KeyD]),
+                (Action::<RotateLeftAction>::new(), bindings![KeyCode::KeyQ]),
+                (Action::<RotateRightAction>::new(), bindings![KeyCode::KeyC]),
                 (Action::<CycleAction>::new(), bindings![KeyCode::Tab]),
                 (Action::<TogglePlacementAction>::new(), bindings![KeyCode::KeyG]),
             ]),
@@ -342,21 +533,40 @@ fn setup_scene(
         Name::new("HUD"),
         Text::new(
             "object_interaction / surface_placement\n\
-             Acquire the crate (E), walk toward the lit wall, press G to snap onto surface.\n\
-             E acquire | R release | F throw | G toggle placement | Z/X distance | A/D rotate",
+             WASD move | Mouse look | Shift sprint | Esc release cursor\n\
+             LMB grab/throw | RMB drop | Scroll distance\n\
+             E grab | R drop | F throw | G toggle placement | Q/C rotate\n\
+             Acquire a prop, walk toward the lit wall, press G to snap onto surface.",
         ),
         Node {
             position_type: PositionType::Absolute,
             left: px(18.0),
             top: px(16.0),
-            width: px(560.0),
+            width: px(600.0),
             ..default()
         },
         TextFont {
-            font_size: 17.0,
+            font_size: 16.0,
             ..default()
         },
         TextColor(Color::WHITE),
+    ));
+
+    // Crosshair
+    commands.spawn((
+        Name::new("Crosshair"),
+        Text::new("+"),
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Percent(50.0),
+            top: Val::Percent(50.0),
+            ..default()
+        },
+        TextFont {
+            font_size: 24.0,
+            ..default()
+        },
+        TextColor(Color::srgba(1.0, 1.0, 1.0, 0.6)),
     ));
 }
 
@@ -509,15 +719,14 @@ fn tint_props(
     };
 
     for (entity, visual, mat, held_by) in &q_props {
-        let color = if held == Some(entity)
-            || held_by.is_some_and(|hb| q_interactor.get(hb.0).is_ok())
-        {
-            Color::srgb(0.28, 0.96, 0.58)
-        } else if targeted == Some(entity) {
-            Color::srgb(0.98, 0.80, 0.24)
-        } else {
-            visual.base_color
-        };
+        let color =
+            if held == Some(entity) || held_by.is_some_and(|hb| q_interactor.get(hb.0).is_ok()) {
+                Color::srgb(0.28, 0.96, 0.58)
+            } else if targeted == Some(entity) {
+                Color::srgb(0.98, 0.80, 0.24)
+            } else {
+                visual.base_color
+            };
         if let Some(material) = materials.get_mut(&mat.0) {
             material.base_color = color;
         }
