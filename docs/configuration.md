@@ -9,7 +9,7 @@
 - `hold`
 - `throw`
 
-The defaults target a medium-weight gravity-handle feel for small props.
+The defaults target a medium-weight gravity-handle feel for small props when you opt into the shipped `DefaultSelectionScorer` and `DefaultThrowProfile`.
 
 ## Acquisition
 
@@ -36,6 +36,8 @@ Tune down:
 
 ## Scoring
 
+`TargetScoringConfig` is consumed by the opt-in `DefaultSelectionScorer`. Custom `SelectionScorerProvider` resources can use these values, reinterpret them, or ignore them entirely.
+
 | Field | Type | Default | Valid Range | Effect |
 | --- | --- | --- | --- | --- |
 | `distance_weight` | `f32` | `0.35` | `>= 0.0` | Raises the score of nearer props |
@@ -44,6 +46,8 @@ Tune down:
 | `direct_hit_bonus` | `f32` | `0.18` | `>= 0.0` | Biases exact ray hits over overlap-only candidates |
 
 If a farther prop should still win because it is the important one, raise `priority_weight` or the prop’s own `InteractableBody::priority`.
+
+If you do not install a `SelectionScorerProvider`, the crate still collects and filters candidates, but it keeps them in collected order instead of applying weighted reranking.
 
 ## Hold
 
@@ -103,14 +107,18 @@ Tune down:
 
 ## Throw
 
+`ThrowConfig` is consumed by the opt-in `DefaultThrowProfile`. Custom `ThrowProfileProvider` resources can map `ThrowHeldObject` intent to any linear/angular impulse pair they need.
+
 | Field | Type | Default | Valid Range | Effect |
 | --- | --- | --- | --- | --- |
-| `impulse` | `f32` | `16.0` | `> 0.0` | Base forward throw impulse |
-| `angular_impulse` | `f32` | `2.4` | `>= 0.0` | Base spin applied on throw |
-| `upward_bias` | `f32` | `0.08` | `>= 0.0` | Small lift added to keep throws readable |
-| `inherit_actor_velocity` | `bool` | `true` | `true/false` | Adds actor velocity to the throw impulse when enabled |
+| `impulse` | `f32` | `16.0` | `> 0.0` | Base forward throw impulse used by `DefaultThrowProfile` |
+| `angular_impulse` | `f32` | `2.4` | `>= 0.0` | Base spin used by `DefaultThrowProfile` |
+| `upward_bias` | `f32` | `0.08` | `>= 0.0` | Extra lift used by `DefaultThrowProfile` |
+| `inherit_actor_velocity` | `bool` | `true` | `true/false` | Adds actor velocity when the active throw profile chooses to inherit it |
 
-Per-prop `ThrowResponseOverride` scales these values without requiring global retuning.
+Per-prop `ThrowResponseOverride` supplies scalar hints to the active throw profile without requiring global retuning.
+
+If you do not install a `ThrowProfileProvider`, `ThrowHeldObject` still releases the held prop, but no extra linear/angular impulse is added.
 
 ## Per-Prop Overrides
 
@@ -121,4 +129,4 @@ Per-prop `ThrowResponseOverride` scales these values without requiring global re
 | `HoldPointOverride` | Supplies a prop-local anchor point and optional rotation |
 | `HoldOrientationOverride` | Overrides the default orientation mode |
 | `InteractionCollisionPolicy` | Chooses a different held collision policy for that prop |
-| `ThrowResponseOverride` | Scales forward impulse, spin, upward bias, and velocity inheritance |
+| `ThrowResponseOverride` | Scales the active throw profile's base impulse/spin and can override velocity inheritance |

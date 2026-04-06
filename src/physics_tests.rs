@@ -96,3 +96,70 @@ fn placement_frame_rotation_aligns_up_with_surface_normal() {
     );
     assert!(forward.dot(normal).abs() < 0.0001);
 }
+
+#[test]
+fn default_throw_profile_matches_lobbed_throw_formula() {
+    let context = ThrowProfileContext {
+        interactor: Entity::from_raw_u32(1).unwrap(),
+        object: Entity::from_raw_u32(2).unwrap(),
+        actor_forward: -Vec3::Z,
+        actor_up: Vec3::Y,
+        actor_right: Vec3::X,
+        actor_velocity: Vec3::new(2.0, 0.5, 0.0),
+        impulse_scale: 1.1,
+        angular_impulse_scale: 0.75,
+        config: crate::ThrowConfig {
+            impulse: 16.0,
+            angular_impulse: 2.4,
+            upward_bias: 0.1,
+            inherit_actor_velocity: true,
+        },
+        response: ThrowResponseOverride::default(),
+    };
+
+    let impulse = DefaultThrowProfile.impulses(&context);
+
+    assert_eq!(
+        impulse.linear,
+        compute_throw_impulse(
+            context.actor_forward,
+            context.actor_velocity,
+            context.config.impulse * context.impulse_scale,
+            context.config.upward_bias,
+            context.config.inherit_actor_velocity,
+            &context.response,
+        )
+    );
+    assert_eq!(
+        impulse.angular,
+        context.actor_right
+            * context.config.angular_impulse
+            * context.angular_impulse_scale
+            * context.response.angular_impulse_scale
+    );
+}
+
+#[test]
+fn throw_profile_provider_supports_callbacks() {
+    let provider = ThrowProfileProvider::from_callback(|context| ThrowImpulse {
+        linear: context.actor_up * 3.0 + context.actor_velocity,
+        angular: context.actor_forward * 2.0,
+    });
+    let context = ThrowProfileContext {
+        interactor: Entity::from_raw_u32(1).unwrap(),
+        object: Entity::from_raw_u32(2).unwrap(),
+        actor_forward: -Vec3::Z,
+        actor_up: Vec3::Y,
+        actor_right: Vec3::X,
+        actor_velocity: Vec3::new(1.0, 0.0, 0.0),
+        impulse_scale: 1.0,
+        angular_impulse_scale: 1.0,
+        config: crate::ThrowConfig::default(),
+        response: ThrowResponseOverride::default(),
+    };
+
+    let impulse = provider.impulses(&context);
+
+    assert_eq!(impulse.linear, Vec3::new(1.0, 3.0, 0.0));
+    assert_eq!(impulse.angular, Vec3::new(0.0, 0.0, -2.0));
+}

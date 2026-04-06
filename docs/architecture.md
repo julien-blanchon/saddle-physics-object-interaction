@@ -34,7 +34,9 @@ Candidate refresh runs on the variable-rate update schedule:
 - optionally perform a direct ray hit
 - gather overlap candidates with a forgiving sphere
 - reject bodies that are disabled, non-dynamic, already held, too far, too heavy, or blocked by line of sight
-- score survivors by distance, view alignment, prop priority, sticky-target bonus, and direct-hit bonus
+- store survivors as collected candidates
+- optionally rerank them through a `SelectionScorerProvider`
+  - the shipped `DefaultSelectionScorer` uses distance, view alignment, prop priority, sticky-target bonus, and direct-hit bonus
 - keep the previous target when a newcomer only wins by less than `target_switch_hysteresis`
 - write the sorted result into `InteractionCandidates` and the selected entry into `InteractionTarget`
 
@@ -82,7 +84,10 @@ The important consequence is that surface placement is still physics-driven rath
 The physics step also resolves pending release requests:
 
 - `Dropped` just clears held state and restores collision policy
-- `Thrown` applies a linear impulse plus optional angular impulse before release
+- `Thrown` builds a throw-intent context from the actor, request scales, config, and per-prop overrides
+- an optional `ThrowProfileProvider` maps that intent to arbitrary linear/angular impulses
+  - the shipped `DefaultThrowProfile` preserves the previous forward-plus-up lob and right-axis spin
+- if no throw profile is installed, the runtime treats throw as a release with no extra impulse
 - forced releases use explicit reasons such as `DistanceExceeded`, `Occluded`, `Unstable`, or `TargetInvalid`
 
 This phase emits `ObjectReleased` and, for throws, `ObjectThrown`.
@@ -143,3 +148,5 @@ Important feel changes belong on the prop, not in controller-specific glue:
 Placement state is intentionally actor-side (`SurfacePlacementMode`) rather than prop-side. That keeps the crate composable: the same held object can be freely carried by one actor and placement-snapped by another without mutating prop authoring data.
 
 This lets a crate, tool, orb, or saw blade each behave differently without changing the plugin API.
+
+The same principle now applies to higher-level feel policy: candidate filtering stays in the runtime, but ranking and throw shaping are intentionally pluggable so different games can keep the same acquisition/hold/release core while swapping their own target heuristics or launch profiles.

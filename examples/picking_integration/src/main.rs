@@ -20,11 +20,12 @@ use bevy_input_focus::{InputDispatchPlugin, tab_navigation::TabNavigationPlugin}
 use bevy_ui_widgets::UiWidgetsPlugins;
 use saddle_pane::prelude::*;
 use saddle_physics_object_interaction::{
-    AdjustHoldDistance, CycleDirection, CycleInteractionTarget, HeldBy, HoldDistance,
-    InteractableBody, InteractionTarget, ObjectInteractionConfig, ObjectInteractionDebugSettings,
-    ObjectInteractionPlugin, ObjectInteractionState, ObjectInteractionSystems, ObjectInteractor,
-    PreferredHoldDistance, ReleaseHeldObject, RotateHeldObject, SetInteractionTarget,
-    ThrowHeldObject, ThrowResponseOverride, TryAcquireObject,
+    AdjustHoldDistance, CycleDirection, CycleInteractionTarget, DefaultSelectionScorer,
+    DefaultThrowProfile, HeldBy, HoldDistance, InteractableBody, InteractionTarget,
+    ObjectInteractionConfig, ObjectInteractionDebugSettings, ObjectInteractionPlugin,
+    ObjectInteractionState, ObjectInteractionSystems, ObjectInteractor, PreferredHoldDistance,
+    ReleaseHeldObject, RotateHeldObject, SelectionScorerProvider, SetInteractionTarget,
+    ThrowHeldObject, ThrowProfileProvider, ThrowResponseOverride, TryAcquireObject,
 };
 
 // ---------------------------------------------------------------------------
@@ -113,6 +114,10 @@ fn main() {
 
     app.insert_resource(ClearColor(Color::srgb(0.04, 0.045, 0.055)));
     app.insert_resource(config.clone());
+    app.insert_resource(SelectionScorerProvider::from_scorer(
+        DefaultSelectionScorer,
+    ));
+    app.insert_resource(ThrowProfileProvider::from_profile(DefaultThrowProfile));
     app.insert_resource(ObjectInteractionDebugSettings {
         enabled: true,
         draw_gizmos: false,

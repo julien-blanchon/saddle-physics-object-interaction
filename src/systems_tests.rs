@@ -7,10 +7,11 @@ use avian3d::prelude::{
 use bevy::{asset::AssetApp, prelude::*, scene::ScenePlugin, time::TimeUpdateStrategy};
 
 use crate::{
-    AcquireFailureReason, AcquisitionMode, HoldDistance, HoldOrientationMode, InteractableBody,
-    ObjectInteractionConfig, ObjectInteractionDiagnostics, ObjectInteractionPlugin,
-    ObjectInteractor, ReleaseHeldObject, SetInteractionTarget, SetSurfacePlacementMode,
-    SurfacePlacementMode, ThrowHeldObject, TryAcquireObject,
+    AcquireFailureReason, AcquisitionMode, DefaultSelectionScorer, DefaultThrowProfile,
+    HoldDistance, HoldOrientationMode, InteractableBody, ObjectInteractionConfig,
+    ObjectInteractionDiagnostics, ObjectInteractionPlugin, ObjectInteractor, ReleaseHeldObject,
+    SelectionScorerProvider, SetInteractionTarget, SetSurfacePlacementMode, SurfacePlacementMode,
+    ThrowHeldObject, ThrowProfileProvider, TryAcquireObject,
 };
 
 fn test_app(config: ObjectInteractionConfig) -> App {
@@ -21,6 +22,8 @@ fn test_app(config: ObjectInteractionConfig) -> App {
         .add_plugins(TransformPlugin)
         .add_plugins(PhysicsPlugins::default())
         .add_plugins(ObjectInteractionPlugin::default().with_config(config));
+    app.insert_resource(SelectionScorerProvider::from_scorer(DefaultSelectionScorer));
+    app.insert_resource(ThrowProfileProvider::from_profile(DefaultThrowProfile));
     app.insert_resource(Time::<Fixed>::from_hz(60.0));
     app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(
         1.0 / 60.0,
@@ -533,4 +536,109 @@ fn acquisition_seeds_pull_to_hand_runtime_from_config() {
     assert!((runtime.pull_duration - 0.45).abs() < 0.0001);
     assert!((runtime.pull_target_distance - 2.25).abs() < 0.0001);
     assert!(runtime.pull_start_distance >= runtime.pull_target_distance);
+}
+
+#[test]
+fn custom_selection_scorer_can_override_default_target_ranking() {
+    let mut app = test_app(ObjectInteractionConfig::default());
+    app.insert_resource(SelectionScorerProvider::from_callback(|_, candidate| {
+        candidate.effective_mass
+    }));
+
+    let actor = spawn_interactor(&mut app, None);
+    let light = spawn_prop(
+        &mut app,
+        "Light Crate",
+        Vec3::new(0.55, 1.0, 0.4),
+        4.0,
+        None,
+    );
+    let heavy = spawn_prop(
+        &mut app,
+        "Heavy Crate",
+        Vec3::new(-0.55, 1.0, -0.2),
+        18.0,
+        None,
+    );
+    settle_world(&mut app);
+
+    app.update();
+
+    assert_eq!(
+        app.world()
+            .get::<crate::InteractionTarget>(actor)
+            .and_then(|target| target.entity),
+        Some(heavy)
+    );
+    assert_ne!(light, heavy);
+}
+
+#[test]
+fn custom_throw_profile_can_redirect_throw_impulse() {
+    let mut app = test_app(ObjectInteractionConfig::default());
+    app.insert_resource(ThrowProfileProvider::from_callback(|context| {
+        crate::ThrowImpulse {
+            linear: context.actor_right * 9.0 + context.actor_up * 2.0,
+            angular: context.actor_forward * 3.5,
+        }
+    }));
+
+    let actor = spawn_interactor(&mut app, None);
+    spawn_prop(&mut app, "Crate", Vec3::new(0.0, 1.0, 0.0), 6.0, None);
+    settle_world(&mut app);
+
+    app.world_mut()
+        .write_message(TryAcquireObject { interactor: actor });
+    app.update();
+    app.world_mut().write_message(ThrowHeldObject {
+        interactor: actor,
+        impulse_scale: 1.0,
+        angular_impulse_scale: 1.0,
+    });
+    run_frames(&mut app, 4);
+
+    assert!(app.world().get::<crate::Holding>(actor).is_none());
+    let diagnostics = app.world().resource::<ObjectInteractionDiagnostics>();
+    let impulse = diagnostics
+        .last_throw
+        .as_ref()
+        .map(|record| record.impulse)
+        .expect("expected throw diagnostics");
+    assert!(
+        impulse.x > 8.5,
+        "expected strong sideways impulse, got {impulse:?}"
+    );
+    assert!(impulse.y > 1.5, "expected upward assist, got {impulse:?}");
+    assert!(
+        impulse.z.abs() < 0.2,
+        "expected little forward bias, got {impulse:?}"
+    );
+}
+
+#[test]
+fn throw_without_profile_releases_with_zero_recorded_impulse() {
+    let mut app = test_app(ObjectInteractionConfig::default());
+    app.world_mut().remove_resource::<ThrowProfileProvider>();
+
+    let actor = spawn_interactor(&mut app, None);
+    let prop = spawn_prop(&mut app, "Crate", Vec3::new(0.0, 1.0, 0.0), 6.0, None);
+    settle_world(&mut app);
+
+    app.world_mut()
+        .write_message(TryAcquireObject { interactor: actor });
+    app.update();
+    app.world_mut().write_message(ThrowHeldObject {
+        interactor: actor,
+        impulse_scale: 1.0,
+        angular_impulse_scale: 1.0,
+    });
+    run_frames(&mut app, 4);
+
+    assert!(app.world().get::<crate::Holding>(actor).is_none());
+    let diagnostics = app.world().resource::<ObjectInteractionDiagnostics>();
+    assert_eq!(
+        diagnostics.last_throw.as_ref().map(|record| record.impulse),
+        Some(Vec3::ZERO)
+    );
+    assert!(app.world().get::<crate::HeldBy>(prop).is_none());
 }

@@ -29,6 +29,15 @@ pub use messages::{
     ObjectThrown, ReleaseHeldObject, ReleaseReason, RotateHeldObject, SetInteractionTarget,
     SetSurfacePlacementMode, ThrowHeldObject, TryAcquireObject,
 };
+pub use physics::{
+    DefaultThrowProfile, ReleaseEvaluation, ThrowImpulse, ThrowProfile, ThrowProfileContext,
+    ThrowProfileProvider,
+};
+pub use selection::{
+    CandidateScoreInput, DefaultSelectionScorer, SelectionCandidate, SelectionScorer,
+    SelectionScorerProvider, SelectionScoringContext, cone_alignment_cutoff, hold_distance_clamped,
+    score_candidate, select_index, should_keep_previous_target,
+};
 
 use avian3d::prelude::{PhysicsSchedule, PhysicsStepSystems};
 use bevy::{
@@ -172,11 +181,16 @@ Add Avian's physics plugins before `ObjectInteractionPlugin`, or pass a custom f
             .register_type::<PreferredHoldDistance>()
             .register_type::<PullToHandConfig>()
             .register_type::<ReleaseReason>()
+            .register_type::<ReleaseEvaluation>()
+            .register_type::<SelectionCandidate>()
+            .register_type::<SelectionScoringContext>()
             .register_type::<SetSurfacePlacementMode>()
             .register_type::<SurfacePlacementConfig>()
             .register_type::<SurfacePlacementMode>()
             .register_type::<TargetScoringConfig>()
+            .register_type::<ThrowImpulse>()
             .register_type::<ThrowConfig>()
+            .register_type::<ThrowProfileContext>()
             .register_type::<ThrowResponseOverride>()
             .configure_sets(
                 self.update_schedule,

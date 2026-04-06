@@ -1,4 +1,4 @@
-use std::f32::consts::PI;
+use std::{f32::consts::PI, sync::Arc};
 
 use avian3d::prelude::{
     ColliderOf, Forces, LinearVelocity, ReadRigidBodyForces, SpatialQuery, WriteRigidBodyForces,
@@ -10,16 +10,101 @@ use crate::{
         HeldBy, HeldRuntime, Holding, InteractionAnchor, ObjectInteractionCommandState,
         ObjectInteractor, SurfacePlacementMode, ThrowResponseOverride,
     },
-    config::ObjectInteractionConfig,
+    config::{ObjectInteractionConfig, ThrowConfig},
     debug,
     messages::{HeldObjectBecameUnstable, ObjectReleased, ObjectThrown, ReleaseReason},
     systems,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct ReleaseEvaluation {
+#[derive(Debug, Clone, Copy, PartialEq, Reflect)]
+#[reflect(Debug, PartialEq)]
+pub struct ReleaseEvaluation {
     pub reason: Option<ReleaseReason>,
     pub became_unstable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Reflect)]
+#[reflect(Debug, PartialEq)]
+pub struct ThrowProfileContext {
+    pub interactor: Entity,
+    pub object: Entity,
+    pub actor_forward: Vec3,
+    pub actor_up: Vec3,
+    pub actor_right: Vec3,
+    pub actor_velocity: Vec3,
+    pub impulse_scale: f32,
+    pub angular_impulse_scale: f32,
+    pub config: ThrowConfig,
+    pub response: ThrowResponseOverride,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Reflect, Default)]
+#[reflect(Debug, PartialEq, Default)]
+pub struct ThrowImpulse {
+    pub linear: Vec3,
+    pub angular: Vec3,
+}
+
+pub trait ThrowProfile: Send + Sync + 'static {
+    fn impulses(&self, context: &ThrowProfileContext) -> ThrowImpulse;
+}
+
+#[derive(Resource, Clone)]
+pub struct ThrowProfileProvider {
+    profile: Arc<dyn ThrowProfile>,
+}
+
+impl ThrowProfileProvider {
+    pub fn from_profile(profile: impl ThrowProfile) -> Self {
+        Self {
+            profile: Arc::new(profile),
+        }
+    }
+
+    pub fn from_callback(
+        callback: impl Fn(&ThrowProfileContext) -> ThrowImpulse + Send + Sync + 'static,
+    ) -> Self {
+        Self::from_profile(CallbackThrowProfile { callback })
+    }
+
+    pub fn impulses(&self, context: &ThrowProfileContext) -> ThrowImpulse {
+        self.profile.impulses(context)
+    }
+}
+
+struct CallbackThrowProfile<F> {
+    callback: F,
+}
+
+impl<F> ThrowProfile for CallbackThrowProfile<F>
+where
+    F: Fn(&ThrowProfileContext) -> ThrowImpulse + Send + Sync + 'static,
+{
+    fn impulses(&self, context: &ThrowProfileContext) -> ThrowImpulse {
+        (self.callback)(context)
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct DefaultThrowProfile;
+
+impl ThrowProfile for DefaultThrowProfile {
+    fn impulses(&self, context: &ThrowProfileContext) -> ThrowImpulse {
+        ThrowImpulse {
+            linear: compute_throw_impulse(
+                context.actor_forward,
+                context.actor_velocity,
+                context.config.impulse * context.impulse_scale,
+                context.config.upward_bias,
+                context.config.inherit_actor_velocity,
+                &context.response,
+            ),
+            angular: context.actor_right
+                * context.config.angular_impulse
+                * context.angular_impulse_scale
+                * context.response.angular_impulse_scale,
+        }
+    }
 }
 
 pub(crate) fn compute_spring_force(
@@ -387,6 +472,7 @@ pub(crate) fn maintain_holds(
 
 pub(crate) fn release_and_throw(
     config: Res<ObjectInteractionConfig>,
+    throw_profile: Option<Res<ThrowProfileProvider>>,
     mut commands: Commands,
     mut released: MessageWriter<ObjectReleased>,
     mut thrown: MessageWriter<ObjectThrown>,
@@ -439,20 +525,25 @@ pub(crate) fn release_and_throw(
 
         if let Some(request) = throw_request {
             let response = response_override.copied().unwrap_or_default();
-            let impulse = compute_throw_impulse(
-                *actor_transform.forward(),
-                actor_velocity,
-                config.throw.impulse * request.impulse_scale,
-                config.throw.upward_bias,
-                config.throw.inherit_actor_velocity,
-                &response,
-            );
-            let angular_impulse = actor_transform.right()
-                * config.throw.angular_impulse
-                * request.angular_impulse_scale
-                * response.angular_impulse_scale;
-            forces.apply_linear_impulse(impulse);
-            forces.apply_angular_impulse(angular_impulse);
+            let impulse = throw_profile
+                .as_deref()
+                .map(|profile| {
+                    profile.impulses(&ThrowProfileContext {
+                        interactor: actor,
+                        object: prop,
+                        actor_forward: *actor_transform.forward(),
+                        actor_up: *actor_transform.up(),
+                        actor_right: *actor_transform.right(),
+                        actor_velocity,
+                        impulse_scale: request.impulse_scale,
+                        angular_impulse_scale: request.angular_impulse_scale,
+                        config: config.throw.clone(),
+                        response,
+                    })
+                })
+                .unwrap_or_default();
+            forces.apply_linear_impulse(impulse.linear);
+            forces.apply_angular_impulse(impulse.angular);
             systems::restore_collision_layers(&mut commands, prop, runtime.saved_collision_layers);
             commands.entity(actor).remove::<Holding>();
             commands.entity(prop).remove::<(HeldBy, HeldRuntime)>();
@@ -468,10 +559,10 @@ pub(crate) fn release_and_throw(
             thrown.write(ObjectThrown {
                 interactor: actor,
                 object: prop,
-                impulse,
+                impulse: impulse.linear,
             });
             debug::record_release(&mut diagnostics, actor, prop, ReleaseReason::Thrown);
-            debug::record_throw(&mut diagnostics, actor, prop, impulse);
+            debug::record_throw(&mut diagnostics, actor, prop, impulse.linear);
             continue;
         }
 

@@ -16,14 +16,15 @@ use bevy_input_focus::{InputDispatchPlugin, tab_navigation::TabNavigationPlugin}
 use bevy_ui_widgets::UiWidgetsPlugins;
 use saddle_pane::prelude::*;
 use saddle_physics_object_interaction::{
-    AdjustHoldDistance, CycleDirection, CycleInteractionTarget, HeldBy, HoldDistance,
-    HoldOrientationMode, HoldOrientationOverride, HoldPointOverride, InteractableBody,
-    InteractionCollisionPolicy, InteractionMassLimitOverride, InteractionTarget, ObjectAcquired,
-    ObjectInteractionConfig, ObjectInteractionDebugSettings, ObjectInteractionDiagnostics,
-    ObjectInteractionFailed, ObjectInteractionPlugin, ObjectInteractionState,
-    ObjectInteractionSystems, ObjectInteractor, ObjectReleased, ObjectThrown,
-    PreferredHoldDistance, ReleaseHeldObject, RotateHeldObject, SetInteractionTarget,
-    SetSurfacePlacementMode, SurfacePlacementMode, ThrowHeldObject, ThrowResponseOverride,
+    AdjustHoldDistance, CycleDirection, CycleInteractionTarget, DefaultSelectionScorer,
+    DefaultThrowProfile, HeldBy, HoldDistance, HoldOrientationMode, HoldOrientationOverride,
+    HoldPointOverride, InteractableBody, InteractionCollisionPolicy,
+    InteractionMassLimitOverride, InteractionTarget, ObjectAcquired, ObjectInteractionConfig,
+    ObjectInteractionDebugSettings, ObjectInteractionDiagnostics, ObjectInteractionFailed,
+    ObjectInteractionPlugin, ObjectInteractionState, ObjectInteractionSystems, ObjectInteractor,
+    ObjectReleased, ObjectThrown, PreferredHoldDistance, ReleaseHeldObject, RotateHeldObject,
+    SelectionScorerProvider, SetInteractionTarget, SetSurfacePlacementMode,
+    SurfacePlacementMode, ThrowHeldObject, ThrowProfileProvider, ThrowResponseOverride,
     TryAcquireObject,
 };
 
@@ -424,6 +425,10 @@ struct InteractionStatsPane {
 pub fn configure_app(app: &mut App, mode: DemoMode) {
     app.insert_resource(ClearColor(Color::srgb(0.04, 0.045, 0.055)));
     app.insert_resource(mode.config());
+    app.insert_resource(SelectionScorerProvider::from_scorer(
+        DefaultSelectionScorer,
+    ));
+    app.insert_resource(ThrowProfileProvider::from_profile(DefaultThrowProfile));
     app.insert_resource(ObjectInteractionDebugSettings {
         enabled: true,
         draw_gizmos: matches!(mode, DemoMode::Lab),

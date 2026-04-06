@@ -25,12 +25,18 @@ bevy = "0.18"
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use saddle_physics_object_interaction::{
-    HoldDistance, InteractableBody, ObjectInteractionPlugin, ObjectInteractor, TryAcquireObject,
+    DefaultSelectionScorer, DefaultThrowProfile, HoldDistance, InteractableBody,
+    ObjectInteractionPlugin, ObjectInteractor, SelectionScorerProvider, ThrowProfileProvider,
+    TryAcquireObject,
 };
 
 fn main() {
     App::new()
         .add_plugins((DefaultPlugins, PhysicsPlugins::default()))
+        .insert_resource(SelectionScorerProvider::from_scorer(
+            DefaultSelectionScorer,
+        ))
+        .insert_resource(ThrowProfileProvider::from_profile(DefaultThrowProfile))
         .add_plugins(ObjectInteractionPlugin::default())
         .add_systems(Startup, setup)
         .add_systems(Update, trigger_grab)
@@ -73,14 +79,25 @@ fn trigger_grab(
 Use the default always-on wiring:
 
 ```rust
+app.insert_resource(SelectionScorerProvider::from_scorer(
+    DefaultSelectionScorer,
+));
+app.insert_resource(ThrowProfileProvider::from_profile(DefaultThrowProfile));
 app.add_plugins(ObjectInteractionPlugin::default());
 ```
 
 Or inject your own schedules:
 
 ```rust
-use saddle_physics_object_interaction::ObjectInteractionPlugin;
+use saddle_physics_object_interaction::{
+    DefaultSelectionScorer, DefaultThrowProfile, ObjectInteractionPlugin,
+    SelectionScorerProvider, ThrowProfileProvider,
+};
 
+app.insert_resource(SelectionScorerProvider::from_scorer(
+    DefaultSelectionScorer,
+));
+app.insert_resource(ThrowProfileProvider::from_profile(DefaultThrowProfile));
 app.add_plugins(ObjectInteractionPlugin::new(
     OnEnter(MyState::Gameplay),
     OnExit(MyState::Gameplay),
@@ -88,6 +105,17 @@ app.add_plugins(ObjectInteractionPlugin::new(
     avian3d::prelude::PhysicsSchedule,
 ));
 ```
+
+## Selection And Throw Policies
+
+Candidate collection is built into the crate. Ranking and throw shaping are now explicit, optional policies:
+
+- `SelectionScorerProvider` reranks validated candidates after collection
+- `ThrowProfileProvider` maps `ThrowHeldObject` intent into arbitrary linear and angular impulses
+
+If you do not install a scorer, the crate keeps candidates in collected order (`DirectHit` first, then overlap hits by collection order/distance). If you do not install a throw profile, `ThrowHeldObject` releases the held prop without adding extra impulse.
+
+`DefaultSelectionScorer` and `DefaultThrowProfile` keep the previous weighted target ranking and forward-plus-up lobbed throw behavior, and all shipped examples opt into them explicitly.
 
 ## Public API
 
@@ -105,9 +133,14 @@ app.add_plugins(ObjectInteractionPlugin::new(
 | `InteractionMassLimitOverride` | Per-prop effective mass override for selection/validation |
 | `HoldPointOverride` / `HoldOrientationOverride` | Per-prop local anchor and rotation policy overrides |
 | `InteractionCollisionPolicy` | Collision-layer behavior while a prop is held |
-| `ThrowResponseOverride` | Per-prop throw impulse and spin scaling |
+| `SelectionScorerProvider` / `SelectionScorer` | Optional post-collection ranking hook for target selection |
+| `ThrowProfileProvider` / `ThrowProfile` | Optional throw-intent mapper for custom linear/angular impulses |
+| `SelectionCandidate` / `SelectionScoringContext` | Data passed to custom selection scorers |
+| `ThrowImpulse` / `ThrowProfileContext` | Data passed to custom throw profiles |
+| `DefaultSelectionScorer` / `DefaultThrowProfile` | Opt-in helpers that keep the previous weighted ranking and lobbed throw feel |
+| `ThrowResponseOverride` | Per-prop throw scaling and velocity-inheritance hints consumed by throw profiles |
 | `PullToHandConfig` / `SurfacePlacementConfig` | Global hold sub-configs for pickup easing and wall/shelf placement |
-| `ObjectInteractionConfig` | Global acquisition, scoring, hold, and throw tuning |
+| `ObjectInteractionConfig` | Global acquisition, hold, and default scorer/profile tuning |
 | `ObjectInteractionDiagnostics` / `ObjectInteractionDebugSettings` | Runtime counters and optional gizmo controls |
 
 ## Required Components
@@ -197,6 +230,8 @@ All examples feature FPS-style movement (WASD + mouse look) so you can walk arou
 
 All example workspaces include `saddle-pane` so the hold, pull-to-hand, throw, placement, and combo-room parameters can be edited live while the demo runs.
 
+All shipped examples now opt into `DefaultSelectionScorer` and `DefaultThrowProfile` explicitly so the old ranking and throw feel stays documented rather than hidden inside the runtime.
+
 The combo example is intentionally wired the same way downstream games would do it: the local object-interaction crate stays on the workspace path, while `saddle-physics-destruction` and `saddle-physics-transform-interpolation` are pulled in through Git dependencies to prove the public APIs compose cleanly across repos.
 
 For batch verification, every example and the crate-local lab also support
@@ -209,7 +244,7 @@ Run the example commands above from inside `shared/physics/saddle-physics-object
 
 The richer showcase and verification app lives in:
 
-[`examples/lab/README.md`](/Users/julienblanchon/Git/bevy_starter/shared/physics/saddle-physics-object-interaction/examples/lab/README.md)
+[`examples/lab/README.md`](examples/lab/README.md)
 
 The lab includes:
 

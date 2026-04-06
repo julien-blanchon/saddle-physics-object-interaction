@@ -24,16 +24,13 @@ use crate::{
         TryAcquireObject,
     },
     physics,
-    selection::{self, CandidateScoreInput},
+    selection::{self, SelectionCandidate, SelectionScorerProvider, SelectionScoringContext},
 };
 
 #[derive(Debug, Clone, Copy)]
 struct Candidate {
-    entity: Entity,
-    score: f32,
-    method: CandidateMethod,
-    distance: f32,
-    hit_point: Option<Vec3>,
+    candidate: SelectionCandidate,
+    score: Option<f32>,
 }
 
 pub(crate) fn activate_runtime(mut runtime: ResMut<ObjectInteractionRuntimeActive>) {
@@ -141,6 +138,7 @@ pub(crate) fn apply_messages(
 
 pub(crate) fn refresh_candidates(
     config: Res<ObjectInteractionConfig>,
+    scorer: Option<Res<SelectionScorerProvider>>,
     spatial_query: SpatialQuery,
     q_collider_parent: Query<&ColliderOf>,
     q_prop: Query<(
@@ -191,6 +189,10 @@ pub(crate) fn refresh_candidates(
         let actor_transform = actor_transform.compute_transform();
         let origin = actor_transform.transform_point(anchor.local_offset);
         let forward = actor_transform.forward();
+        let previous_target = target.entity;
+        let max_mass = interactor
+            .max_target_mass
+            .unwrap_or(config.acquisition.max_target_mass);
         command_state.last_rejected_target = None;
         let mut filter = interactor.candidate_filter.clone();
         filter.excluded_entities.insert(entity);
@@ -231,155 +233,96 @@ pub(crate) fn refresh_candidates(
         forgiving_hits.sort_by(|left, right| left.distance.total_cmp(&right.distance));
 
         let mut unique_entities = EntityHashSet::default();
-        let mut scored = Vec::new();
+        let mut collected = Vec::new();
+
+        if let Some(hit) = direct_hit {
+            match collect_selection_candidate(
+                &q_prop,
+                &spatial_query,
+                &q_collider_parent,
+                interactor,
+                &config,
+                entity,
+                origin,
+                forward,
+                max_mass,
+                hit.entity,
+                hit.point,
+                CandidateMethod::DirectHit,
+                Some(hit.distance),
+                previous_target,
+            ) {
+                Some(candidate) => {
+                    unique_entities.insert(candidate.entity);
+                    collected.push(Candidate {
+                        candidate,
+                        score: None,
+                    });
+                }
+                None => {
+                    command_state.last_rejected_target = Some((
+                        hit.entity,
+                        direct_hit_failure_reason(&q_prop, hit.entity, max_mass),
+                    ));
+                }
+            }
+        }
 
         for hit in forgiving_hits {
             if !unique_entities.insert(hit.entity) {
                 continue;
             }
 
-            let Ok((body, rigid_body, mass, body_transform, mass_override, held)) =
-                q_prop.get(hit.entity)
-            else {
-                continue;
+            if let Some(candidate) = collect_selection_candidate(
+                &q_prop,
+                &spatial_query,
+                &q_collider_parent,
+                interactor,
+                &config,
+                entity,
+                origin,
+                forward,
+                max_mass,
+                hit.entity,
+                hit.point,
+                CandidateMethod::Overlap,
+                None,
+                previous_target,
+            ) {
+                collected.push(Candidate {
+                    candidate,
+                    score: None,
+                });
+            }
+        }
+
+        if let Some(scorer) = scorer.as_deref() {
+            let context = SelectionScoringContext {
+                interactor: entity,
+                origin,
+                forward: *forward,
+                current_target: previous_target,
+                acquisition: config.acquisition.clone(),
+                scoring: config.scoring.clone(),
             };
 
-            if !body.enabled || !rigid_body.is_dynamic() || held {
-                continue;
+            for candidate in &mut collected {
+                candidate.score = Some(scorer.score(&context, &candidate.candidate));
             }
 
-            let to_body = body_transform.translation() - origin;
-            let distance = to_body.length();
-            if distance > config.acquisition.max_distance {
-                continue;
-            }
-
-            let Ok(direction) = Dir3::new(to_body) else {
-                continue;
-            };
-
-            let alignment = direction.dot(*forward);
-            if alignment < selection::cone_alignment_cutoff(&config.acquisition) {
-                continue;
-            }
-
-            let effective_mass = effective_target_mass(*mass, mass_override.copied());
-            let max_mass = interactor
-                .max_target_mass
-                .unwrap_or(config.acquisition.max_target_mass);
-            if effective_mass > max_mass {
-                continue;
-            }
-
-            if config.acquisition.require_line_of_sight
-                && !has_line_of_sight(
-                    &spatial_query,
-                    &q_collider_parent,
-                    interactor.obstruction_filter.clone(),
-                    entity,
-                    hit.entity,
-                    origin,
-                    body_transform.translation(),
-                )
-            {
-                continue;
-            }
-
-            let sticky = target.entity == Some(hit.entity);
-            let direct_hit_match = direct_hit
-                .as_ref()
-                .is_some_and(|direct_hit| direct_hit.entity == hit.entity);
-            let score = selection::score_candidate(
-                CandidateScoreInput {
-                    distance,
-                    alignment,
-                    priority: body.priority,
-                    direct_hit: direct_hit_match,
-                    sticky,
-                },
-                &config.acquisition,
-                &config.scoring,
-            );
-
-            scored.push(Candidate {
-                entity: hit.entity,
-                score,
-                method: if direct_hit_match {
-                    CandidateMethod::DirectHit
-                } else {
-                    CandidateMethod::Overlap
-                },
-                distance,
-                hit_point: direct_hit
-                    .as_ref()
-                    .and_then(|direct_hit| {
-                        (direct_hit.entity == hit.entity).then_some(direct_hit.point)
-                    })
-                    .or(Some(hit.point)),
+            collected.sort_by(|left, right| {
+                right
+                    .score
+                    .unwrap_or_default()
+                    .total_cmp(&left.score.unwrap_or_default())
+                    .then_with(|| left.candidate.distance.total_cmp(&right.candidate.distance))
             });
         }
 
-        if let Some(hit) = direct_hit {
-            if let Ok((body, rigid_body, mass, _, mass_override, held)) = q_prop.get(hit.entity) {
-                let effective_mass = effective_target_mass(*mass, mass_override.copied());
-                let max_mass = interactor
-                    .max_target_mass
-                    .unwrap_or(config.acquisition.max_target_mass);
-                if body.enabled && rigid_body.is_dynamic() && !held && effective_mass <= max_mass {
-                    if let Some(existing) = scored
-                        .iter_mut()
-                        .find(|candidate| candidate.entity == hit.entity)
-                    {
-                        existing.method = CandidateMethod::DirectHit;
-                        existing.hit_point = Some(hit.point);
-                    } else {
-                        scored.push(Candidate {
-                            entity: hit.entity,
-                            score: selection::score_candidate(
-                                CandidateScoreInput {
-                                    distance: hit.distance,
-                                    alignment: 1.0,
-                                    priority: body.priority,
-                                    direct_hit: true,
-                                    sticky: target.entity == Some(hit.entity),
-                                },
-                                &config.acquisition,
-                                &config.scoring,
-                            ),
-                            method: CandidateMethod::DirectHit,
-                            distance: hit.distance,
-                            hit_point: Some(hit.point),
-                        });
-                    }
-                } else {
-                    command_state.last_rejected_target = Some((
-                        hit.entity,
-                        if !body.enabled {
-                            AcquireFailureReason::NoValidTarget
-                        } else if !rigid_body.is_dynamic() {
-                            AcquireFailureReason::TargetNotDynamic
-                        } else if held {
-                            AcquireFailureReason::TargetAlreadyHeld
-                        } else {
-                            AcquireFailureReason::TargetTooHeavy
-                        },
-                    ));
-                }
-            } else {
-                command_state.last_rejected_target =
-                    Some((hit.entity, AcquireFailureReason::NoValidTarget));
-            }
-        }
-
-        scored.sort_by(|left, right| {
-            right
-                .score
-                .total_cmp(&left.score)
-                .then_with(|| left.distance.total_cmp(&right.distance))
-        });
-
-        let previous_target = target.entity;
-        candidates.ordered = scored.iter().map(|candidate| candidate.entity).collect();
+        candidates.ordered = collected
+            .iter()
+            .map(|candidate| candidate.candidate.entity)
+            .collect();
 
         let selected = if let Some(override_target) = command_state.override_target {
             candidates
@@ -401,19 +344,20 @@ pub(crate) fn refresh_candidates(
                 .position(|candidate| *candidate == previous)
                 .or(Some(0).filter(|_| !candidates.ordered.is_empty()));
 
-            match previous_index {
-                Some(previous_index)
+            match (previous_index, scorer.as_ref()) {
+                (Some(previous_index), Some(_))
                     if previous_index > 0
                         && selection::should_keep_previous_target(
-                            scored[0].score,
-                            scored[previous_index].score,
+                            collected[0].score.unwrap_or_default(),
+                            collected[previous_index].score.unwrap_or_default(),
                             config.acquisition.target_switch_hysteresis,
                         ) =>
                 {
                     Some(previous_index)
                 }
-                Some(_) => Some(0),
-                None => None,
+                (Some(previous_index), None) => Some(previous_index),
+                (Some(_), Some(_)) => Some(0),
+                (None, _) => None,
             }
         } else {
             Some(0).filter(|_| !candidates.ordered.is_empty())
@@ -423,17 +367,17 @@ pub(crate) fn refresh_candidates(
         command_state.cycle_steps = 0;
 
         if let Some(selected) = selected {
-            let chosen = scored[selected];
-            target.entity = Some(chosen.entity);
-            target.score = chosen.score;
-            target.method = if command_state.override_target == Some(chosen.entity) {
+            let chosen = collected[selected];
+            target.entity = Some(chosen.candidate.entity);
+            target.score = chosen.score.unwrap_or_default();
+            target.method = if command_state.override_target == Some(chosen.candidate.entity) {
                 CandidateMethod::ExplicitTarget
             } else {
-                chosen.method
+                chosen.candidate.method
             };
-            target.hit_point = chosen.hit_point;
+            target.hit_point = chosen.candidate.hit_point;
             *state = ObjectInteractionState::Targeting {
-                entity: chosen.entity,
+                entity: chosen.candidate.entity,
                 method: target.method,
             };
         } else {
@@ -779,6 +723,123 @@ struct ForgivingHit {
     entity: Entity,
     distance: f32,
     point: Vec3,
+}
+
+fn collect_selection_candidate(
+    q_prop: &Query<(
+        &crate::components::InteractableBody,
+        &RigidBody,
+        &ComputedMass,
+        &GlobalTransform,
+        Option<&InteractionMassLimitOverride>,
+        Has<HeldBy>,
+    )>,
+    spatial_query: &SpatialQuery,
+    q_collider_parent: &Query<&ColliderOf>,
+    interactor: &ObjectInteractor,
+    config: &ObjectInteractionConfig,
+    actor: Entity,
+    origin: Vec3,
+    forward: Dir3,
+    max_mass: f32,
+    target: Entity,
+    hit_point: Vec3,
+    method: CandidateMethod,
+    distance_override: Option<f32>,
+    current_target: Option<Entity>,
+) -> Option<SelectionCandidate> {
+    let Ok((body, rigid_body, mass, body_transform, mass_override, held)) = q_prop.get(target)
+    else {
+        return None;
+    };
+
+    if !body.enabled || !rigid_body.is_dynamic() || held {
+        return None;
+    }
+
+    let target_position = body_transform.translation();
+    let to_body = target_position - origin;
+    let distance = distance_override.unwrap_or_else(|| to_body.length());
+    if distance > config.acquisition.max_distance {
+        return None;
+    }
+
+    let Ok(direction) = Dir3::new(to_body) else {
+        return None;
+    };
+
+    let alignment = if method == CandidateMethod::DirectHit {
+        1.0
+    } else {
+        direction.dot(*forward)
+    };
+    if alignment < selection::cone_alignment_cutoff(&config.acquisition) {
+        return None;
+    }
+
+    let effective_mass = effective_target_mass(*mass, mass_override.copied());
+    if effective_mass > max_mass {
+        return None;
+    }
+
+    if method != CandidateMethod::DirectHit
+        && config.acquisition.require_line_of_sight
+        && !has_line_of_sight(
+            spatial_query,
+            q_collider_parent,
+            interactor.obstruction_filter.clone(),
+            actor,
+            target,
+            origin,
+            target_position,
+        )
+    {
+        return None;
+    }
+
+    Some(SelectionCandidate {
+        entity: target,
+        method,
+        distance,
+        alignment,
+        priority: body.priority,
+        effective_mass,
+        hit_point: Some(hit_point),
+        target_position,
+        sticky: current_target == Some(target),
+    })
+}
+
+fn direct_hit_failure_reason(
+    q_prop: &Query<(
+        &crate::components::InteractableBody,
+        &RigidBody,
+        &ComputedMass,
+        &GlobalTransform,
+        Option<&InteractionMassLimitOverride>,
+        Has<HeldBy>,
+    )>,
+    target: Entity,
+    max_mass: f32,
+) -> AcquireFailureReason {
+    let Ok((body, rigid_body, mass, _, mass_override, held)) = q_prop.get(target) else {
+        return AcquireFailureReason::NoValidTarget;
+    };
+
+    if !body.enabled {
+        return AcquireFailureReason::NoValidTarget;
+    }
+    if !rigid_body.is_dynamic() {
+        return AcquireFailureReason::TargetNotDynamic;
+    }
+    if held {
+        return AcquireFailureReason::TargetAlreadyHeld;
+    }
+    if effective_target_mass(*mass, mass_override.copied()) > max_mass {
+        return AcquireFailureReason::TargetTooHeavy;
+    }
+
+    AcquireFailureReason::NoValidTarget
 }
 
 fn find_direct_hit(
