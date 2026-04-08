@@ -204,7 +204,6 @@ All examples feature FPS-style movement (WASD + mouse look) so you can walk arou
 | --- | --- | --- |
 | `basic` | `cargo run -p saddle-physics-object-interaction-example-basic` | Physics playground with FPS movement, mouse interaction, varied props in a room |
 | `gravity_gun` | `cargo run -p saddle-physics-object-interaction-example-gravity_gun` | Stronger pull/throw tuning (28 impulse), 120 kg mass limit, heavy objects |
-| `gravity_gun_combo` | `cargo run -p saddle-physics-object-interaction-example-gravity_gun_combo` | Cross-crate gravity-gun puzzle room using destruction and transform interpolation |
 | `inspect_rotate` | `cargo run -p saddle-physics-object-interaction-example-inspect_rotate` | Close hold distance, aligned rotation, and inspection feel |
 | `picking_integration` | `cargo run -p saddle-physics-object-interaction-example-picking_integration` | Click-to-acquire using Bevy mesh picking, with FPS mode toggle (RMB) |
 | `surface_placement` | `cargo run -p saddle-physics-object-interaction-example-surface-placement` | Wall/shelf placement flow with pull-to-hand easing (G to toggle placement) |
@@ -232,7 +231,7 @@ All example workspaces include `saddle-pane` so the hold, pull-to-hand, throw, p
 
 All shipped examples now opt into `DefaultSelectionScorer` and `DefaultThrowProfile` explicitly so the old ranking and throw feel stays documented rather than hidden inside the runtime.
 
-The combo example is intentionally wired the same way downstream games would do it: the local object-interaction crate stays on the workspace path, while `saddle-physics-destruction` and `saddle-physics-transform-interpolation` are pulled in through Git dependencies to prove the public APIs compose cleanly across repos.
+The combo example is intentionally wired the same way downstream games would do it: the local object-interaction crate stays on the workspace path, while `saddle-physics-transform-interpolation` is pulled in through a Git dependency to prove the public APIs compose cleanly across repos.
 
 For batch verification, every example and the crate-local lab also support
 `OBJECT_INTERACTION_EXIT_AFTER_SECONDS=<seconds>` so they can boot, render, and

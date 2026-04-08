@@ -3,7 +3,6 @@ members = [
     "common",
     "basic",
     "gravity_gun",
-    "gravity_gun_combo",
     "inspect_rotate",
     "picking_integration",
     "surface_placement",

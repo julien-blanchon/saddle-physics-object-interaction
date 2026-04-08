@@ -225,14 +225,10 @@ fn fps_look(
 }
 
 fn fps_move(
-    grabbed: Res<CursorGrabbed>,
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
     mut q: Query<(&FpsController, &mut Transform), With<Interactor>>,
 ) {
-    if !grabbed.0 {
-        return;
-    }
     let Ok((ctrl, mut transform)) = q.single_mut() else {
         return;
     };
