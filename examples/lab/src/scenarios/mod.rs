@@ -62,6 +62,16 @@ fn placement_mode(enabled: bool) -> Action {
     }))
 }
 
+fn cycle_target(direction: CycleDirection) -> Action {
+    Action::Custom(Box::new(move |world: &mut bevy::prelude::World| {
+        let interactor = world.resource::<DemoWorld>().interactor;
+        world.write_message(CycleInteractionTarget {
+            interactor,
+            direction,
+        });
+    }))
+}
+
 fn smoke_launch() -> Scenario {
     Scenario::builder("smoke_launch")
         .description("Boot the crate-local lab, settle the default crate-facing station, and capture the ready state.")
@@ -277,13 +287,7 @@ fn object_interaction_cycle_target() -> Scenario {
         }))
         .then(Action::Screenshot("cycle_target_before".into()))
         // Send a CycleInteractionTarget (Next) message
-        .then(Action::Custom(Box::new(|world: &mut bevy::prelude::World| {
-            let interactor = world.resource::<DemoWorld>().interactor;
-            world.write_message(CycleInteractionTarget {
-                interactor,
-                direction: CycleDirection::Next,
-            });
-        })))
+        .then(cycle_target(CycleDirection::Next))
         .then(Action::WaitFrames(4))
         // After cycling, the selection scorer should have advanced to the next candidate;
         // verify via the diagnostics that the selected target name has changed OR that the
@@ -296,13 +300,7 @@ fn object_interaction_cycle_target() -> Scenario {
             world.get::<saddle_physics_object_interaction::ObjectInteractionState>(demo.interactor).is_some()
         }))
         // Cycle back with Previous
-        .then(Action::Custom(Box::new(|world: &mut bevy::prelude::World| {
-            let interactor = world.resource::<DemoWorld>().interactor;
-            world.write_message(CycleInteractionTarget {
-                interactor,
-                direction: CycleDirection::Previous,
-            });
-        })))
+        .then(cycle_target(CycleDirection::Previous))
         .then(Action::WaitFrames(4))
         .then(assertions::custom("target returned to Light Crate after prev-cycle", |world| {
             let diagnostics = world.resource::<DemoDiagnostics>();
